@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Town Life Simulator</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Town Life Simulator</p>
+          <h1>Small Town</h1>
+        </div>
+        <div class="clock-panel">
+          <span id="dayLabel">Day 1</span>
+          <strong id="timeLabel">06:00</strong>
+        </div>
+      </header>
+
+      <section class="controls" aria-label="Simulation controls">
+        <button id="toggleRun" class="primary-button" type="button">Pause</button>
+        <button id="stepHour" type="button">Step 1 Hour</button>
+        <button id="restart" type="button">Restart</button>
+
+        <label>
+          Speed
+          <select id="speedSelect">
+            <option value="0.5">Slow</option>
+            <option value="1" selected>1 minute = 1 hour</option>
+            <option value="3">Fast</option>
+            <option value="10">Very Fast</option>
+            <option value="30">Turbo</option>
+          </select>
+        </label>
+
+        <label>
+          Old Age Death
+          <input id="deathAge" type="range" min="45" max="120" value="82" />
+          <span id="deathAgeLabel">82 years</span>
+        </label>
+
+        <label>
+          Humans
+          <input id="populationSize" type="number" min="10" max="15" value="12" />
+        </label>
+      </section>
+
+      <section class="stats-grid" aria-label="Town stats">
+        <article>
+          <span>Alive</span>
+          <strong id="aliveStat">0</strong>
+        </article>
+        <article>
+          <span>Housed</span>
+          <strong id="housedStat">0</strong>
+        </article>
+        <article>
+          <span>Employed</span>
+          <strong id="employedStat">0</strong>
+        </article>
+        <article>
+          <span>Hungry</span>
+          <strong id="hungryStat">0</strong>
+        </article>
+        <article>
+          <span>Avg Money</span>
+          <strong id="moneyStat">$0</strong>
+        </article>
+        <article>
+          <span>Avg Happiness</span>
+          <strong id="happinessStat">0%</strong>
+        </article>
+        <article>
+          <span>Couples</span>
+          <strong id="couplesStat">0</strong>
+        </article>
+      </section>
+
+      <section class="town-layout">
+        <div class="map-panel">
+          <div class="map-header">
+            <h2>Town Map</h2>
+            <div class="legend">
+              <span><i class="home-dot"></i>House</span>
+              <span><i class="office-dot"></i>Office</span>
+              <span><i class="food-dot"></i>Restaurant</span>
+              <span><i class="square-dot"></i>Town Square</span>
+            </div>
+          </div>
+          <div id="townMap" class="town-map" aria-label="Town map"></div>
+        </div>
+
+        <aside class="details-panel">
+          <h2>Selected Person</h2>
+          <div id="personDetails" class="person-details empty">
+            Select a person on the map or in the list.
+          </div>
+        </aside>
+      </section>
+
+      <section class="bottom-grid">
+        <div class="people-panel">
+          <h2>People</h2>
+          <div id="peopleList" class="people-list"></div>
+        </div>
+        <div class="chat-panel">
+          <h2>Conversations</h2>
+          <div id="conversationList" class="conversation-list"></div>
+        </div>
+        <div class="log-panel">
+          <h2>Town Log</h2>
+          <ol id="eventLog" class="event-log"></ol>
+        </div>
+      </section>
+    </main>
+
+    <div id="friendModal" class="modal-backdrop" hidden>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="friendModalTitle">
+        <div class="modal-header">
+          <h2 id="friendModalTitle">Friend List</h2>
+          <button id="closeFriendModal" type="button" aria-label="Close friend list">Close</button>
+        </div>
+        <div id="friendModalBody" class="modal-body"></div>
+      </section>
+    </div>
+
+    <script src="simulator.js"></script>
+  </body>
+</html>
