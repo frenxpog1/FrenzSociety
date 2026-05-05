@@ -1,10 +1,10 @@
 // Main application entry point
-import { gameConfig, buildings, jobs } from './constants.js';
+import { gameConfig, buildings, jobs, names, genders, traits, skills, entryLevelJobs } from './constants.js';
 import { formatHour, clamp, randomItem } from './utils.js';
 import { state, initializeElements } from './state.js';
 import { createPeople, getPerson, createChild } from './people.js';
-import { getRelationship, getRelationshipEntries } from './relationships.js';
-import { updatePerson, getBuilding } from './simulation.js';
+import { getRelationshipEntries } from './relationships.js';
+import { updatePerson, getBuilding, buildingOccupancy, isWorkHour } from './simulation.js';
 import { shouldArgue, updateRelationship, chooseConversationTopic, conversationLinesForTopic } from './interactions.js';
 import { renderStats, renderMap, renderPeopleList, renderDetails, renderConversations, renderLog, buildRelationshipRow } from './render.js';
 import { animatePeople } from './animation.js';
@@ -79,24 +79,148 @@ function advanceHour(skipRender = false) {
     state.people = state.people.map((person) => {
       let money = person.money;
       if (!person.isChild && person.alive) {
-        if (money >= 20) {
-          money -= 20; // $15 rent + $5 tax
-          state.townTreasury += 20;
+        // Daily expenses: $15 rent + $5 tax
+        const dailyExpenses = 20;
+        if (money >= dailyExpenses) {
+          money -= dailyExpenses;
+          state.townTreasury += dailyExpenses;
         } else {
           state.townTreasury += money;
           money = 0;
         }
       }
-      return {
+      let updatedPerson = {
         ...person,
         ageDays: person.ageDays + 91, // People age 1/4th of a year per day so kids grow up!
         talkedToday: 0,
+        daysWorked: person.job && !person.isChild ? (person.daysWorked || 0) + 1 : (person.daysWorked || 0), // Increment days worked
         money
       };
+      
+      if (updatedPerson.status === "In Jail" && updatedPerson.jailDays > 0) {
+        updatedPerson.jailDays -= 1;
+        if (updatedPerson.jailDays <= 0) {
+          updatedPerson.status = "At home";
+          updatedPerson.locationId = updatedPerson.homeId;
+          updatedPerson.money += 100; // Release money
+          triggerEvent("🔓 Released", `${updatedPerson.name} served their time and was released from Jail with $100 to restart their life.`);
+        }
+      }
+      
+      return updatedPerson;
+    });
+    
+    // Weekly treasury redistribution (every 7 days)
+    if (state.day % 7 === 0) {
+      if (state.casinoBankroll > 5000) {
+        const excess = state.casinoBankroll - 5000;
+        state.townTreasury += excess;
+        state.casinoBankroll = 5000;
+        addLog(`The Casino transferred $${Math.floor(excess)} in weekly profits to the Town Treasury.`);
+      }
+      if (state.townTreasury > 0) {
+        const alivePeople = state.people.filter(p => p.alive && !p.isChild);
+        if (alivePeople.length > 0) {
+          const redistributionAmount = Math.floor(state.townTreasury * 0.5);
+          const perPerson = Math.floor(redistributionAmount / alivePeople.length);
+          
+          if (perPerson > 0) {
+            state.people = state.people.map(person => {
+              if (person.alive && !person.isChild) {
+                return { ...person, money: person.money + perPerson };
+              }
+              return person;
+            });
+            
+            state.townTreasury -= redistributionAmount;
+            addLog(`💰 Weekly redistribution! Each person received $${perPerson} from the treasury. Treasury: $${state.townTreasury}`);
+            
+            triggerEvent("💰 Treasury Redistribution", `The town distributed $${redistributionAmount} to all ${alivePeople.length} citizens! Each person received $${perPerson}. Time to gamble!`);
+          }
+        }
+      }
+    }
+    
+    // Police Force Management
+    const aliveCount = state.people.filter(p => p.alive).length;
+    const aliveAdults = state.people.filter(p => p.alive && !p.isChild);
+    const requiredCops = Math.floor(aliveCount / 5);
+    const cops = aliveAdults.filter(p => p.job && p.job.title && p.job.title.includes("Police"));
+    
+    if (cops.length > requiredCops) {
+      // Too many cops, fire the least happy one and give them a new job
+      const toFire = cops.sort((a, b) => a.happiness - b.happiness)[0];
+      if (toFire) {
+        // Give them a new entry-level job instead of leaving them unemployed
+        const newJobTitle = entryLevelJobs.filter(j => !j.includes("Police"))[Math.floor(Math.random() * (entryLevelJobs.length - 1))];
+        const newJobTemplate = jobs.find(j => j.name === newJobTitle);
+        
+        if (newJobTemplate) {
+          toFire.job = { ...newJobTemplate, title: newJobTemplate.name };
+          toFire.daysWorked = 0;
+          triggerEvent("👮 Job Change", `Due to population decline, ${toFire.name} was let go from the police force but found work as a ${newJobTitle}!`);
+        } else {
+          toFire.job = null; // Unemployed as fallback
+          triggerEvent("👮 Cop Fired", `Due to population decline, the town has downsized the police force. ${toFire.name} was let go.`);
+        }
+      }
+    } else if (cops.length < requiredCops) {
+      // Need more cops, find an unemployed adult or random worker
+      const candidates = aliveAdults.filter(p => !p.job || (!p.job.title.includes("Police")));
+      if (candidates.length > 0) {
+        const unemployed = candidates.filter(p => !p.job);
+        const toHire = unemployed.length > 0 ? unemployed[Math.floor(Math.random() * unemployed.length)] : candidates[Math.floor(Math.random() * candidates.length)];
+        
+        const dayCops = cops.filter(c => c.job.title.includes("(Day)")).length;
+        const nightCops = cops.filter(c => c.job.title.includes("(Night)")).length;
+        const shift = nightCops < dayCops ? "Police Officer (Night)" : "Police Officer (Day)";
+        
+        const jobTemplate = jobs.find(j => j.name === shift);
+        toHire.job = { ...jobTemplate, title: jobTemplate.name };
+        toHire.daysWorked = 0;
+        triggerEvent("👮 New Cop Recruited", `${toHire.name} has been recruited as a ${shift} to keep our growing town safe!`);
+      }
+    }
+    
+    // Help unemployed people find jobs
+    const unemployed = aliveAdults.filter(p => !p.job && !p.isChild);
+    unemployed.forEach(person => {
+      // Unemployed people actively look for work
+      if (Math.random() < 0.3) { // 30% chance per day to find a job
+        const newJobTitle = entryLevelJobs[Math.floor(Math.random() * entryLevelJobs.length)];
+        const newJobTemplate = jobs.find(j => j.name === newJobTitle);
+        
+        if (newJobTemplate) {
+          person.job = { ...newJobTemplate, title: newJobTemplate.name };
+          person.daysWorked = 0;
+          addLog(`💼 ${person.name} found work as a ${newJobTitle}!`);
+        }
+      }
     });
     
     // Check for pregnancies once per day
     checkPregnancies();
+    
+    // Check for job promotions
+    checkPromotions();
+    
+    // Remove dead people after 3 days
+    removeDead();
+    
+    // Housing management - assign homeless people to available houses
+    const homeless = state.people.filter(p => p.alive && !p.homeId);
+    homeless.forEach(person => {
+      const houses = buildings.filter(b => b.type === "home");
+      for (const house of houses) {
+        const occupants = state.people.filter(p => p.alive && p.homeId === house.id).length;
+        if (occupants < house.capacity) {
+          person.homeId = house.id;
+          person.locationId = house.id;
+          addLog(`🏠 ${person.name} moved into ${house.name} (${occupants + 1}/${house.capacity} people)`);
+          break;
+        }
+      }
+    });
     
     // Check if anyone needs and can afford a new house
     state.people.forEach(person => {
@@ -131,14 +255,128 @@ function advanceHour(skipRender = false) {
   const oldAlive = state.people.filter(p => p.alive).map(p => p.id);
   
   let jackpotEvent = null;
+  let robberyEvents = [];
   state.people = state.people.map((person) => {
     const updated = updatePerson(person, state, addLog);
     if (updated.modalEvent) {
       jackpotEvent = updated.modalEvent;
       delete updated.modalEvent;
     }
+    // Collect treasury contributions
+    if (updated.treasuryContribution) {
+      state.townTreasury += updated.treasuryContribution;
+      delete updated.treasuryContribution;
+    }
+    // Casino balance updates
+    if (updated.casinoPayout) {
+      // Check if casino can afford to pay
+      if (state.casinoBankroll >= updated.casinoPayout) {
+        state.casinoBankroll -= updated.casinoPayout;
+        console.log(`Casino paid out ${updated.casinoPayout}, new balance: ${state.casinoBankroll}`);
+      } else {
+        // Casino can only pay what it has
+        const actualPayout = Math.max(0, state.casinoBankroll);
+        state.casinoBankroll = 0;
+        console.log(`Casino broke! Could only pay ${actualPayout} of ${updated.casinoPayout}`);
+      }
+      delete updated.casinoPayout;
+    }
+    if (updated.casinoContribution) {
+      state.casinoBankroll += updated.casinoContribution;
+      console.log(`Casino received ${updated.casinoContribution}, new balance: ${state.casinoBankroll}`);
+      delete updated.casinoContribution;
+    }
+    if (updated.robbingVictimId) {
+      robberyEvents.push({ robberId: updated.id, victimId: updated.robbingVictimId });
+      delete updated.robbingVictimId;
+    }
     return updated;
   });
+  
+  for (const { robberId, victimId } of robberyEvents) {
+    let robber = state.people.find(p => p.id === robberId);
+    let victim = state.people.find(p => p.id === victimId);
+    if (!robber || !victim || !robber.alive || !victim.alive || victim.status === "In Jail") continue;
+    
+    // Initialize robbery confidence if not set
+    if (robber.robberyConfidence === undefined) robber.robberyConfidence = 0;
+    
+    // Check if cops on patrol
+    const activeCops = state.people.filter(p => p.alive && p.job?.title.includes("Police") && isWorkHour(p, state.hour));
+    
+    // Confidence affects success rate - higher confidence = better at avoiding cops
+    const baseDetectionRate = activeCops.length > 0 ? 0.7 : 0;
+    const confidenceBonus = Math.min(robber.robberyConfidence * 0.05, 0.4); // Max 40% bonus
+    const actualDetectionRate = Math.max(baseDetectionRate - confidenceBonus, 0.2); // Min 20% if cops present
+    
+    if (activeCops.length > 0 && Math.random() < actualDetectionRate) {
+      // CAUGHT BY POLICE
+      const cop = activeCops[Math.floor(Math.random() * activeCops.length)];
+      
+      // Reset confidence on getting caught
+      robber.robberyConfidence = Math.max(0, robber.robberyConfidence - 3);
+      
+      if (Math.random() < 0.1) { // 10% chance the robber fights back
+        if (Math.random() < 0.4) { // 40% chance the fight is lethal for the cop
+          cop.alive = false;
+          cop.status = "Killed in the line of duty";
+          cop.deathDay = state.day;
+          const stolen = Math.floor(victim.money * 0.5);
+          victim.money -= stolen;
+          robber.money += stolen;
+          robber.happiness = clamp(robber.happiness + 20, 0, 100);
+          jackpotEvent = { title: "🚓 Officer Down!", message: `Tragedy strikes! Officer ${cop.name} was shot and killed while trying to stop ${robber.name} from robbing ${victim.name}!` };
+        } else {
+          robber.locationId = "jail-1";
+          robber.jailHoursRemaining = 120; // 5 days
+          robber.happiness = clamp(robber.happiness - 40, 0, 100);
+          jackpotEvent = { title: "🔫 Shootout!", message: `Officer ${cop.name} was injured in a violent shootout, but managed to arrest ${robber.name}! They get 5 days in jail. Confidence: ${robber.robberyConfidence}` };
+        }
+      } else if (Math.random() < 0.05) { // 5% lethal force
+        robber.alive = false;
+        robber.status = "Killed by Police";
+        robber.deathDay = state.day;
+        jackpotEvent = { title: "🔫 Lethal Force", message: `During an attempted robbery, ${robber.name} was shot and killed by Officer ${cop.name}!` };
+      } else {
+        robber.locationId = "jail-1";
+        robber.jailHoursRemaining = 72; // 3 days
+        robber.happiness = clamp(robber.happiness - 30, 0, 100);
+        jackpotEvent = { title: "🚓 Arrested!", message: `${robber.name} tried to rob ${victim.name} but was caught by Officer ${cop.name}! Sent to jail for 3 days. Confidence dropped to ${robber.robberyConfidence}.` };
+      }
+    } else {
+      // ROBBERY SUCCEEDS
+      const stolenAmount = Math.floor(Math.random() * (gameConfig.robberyMaxSteal - gameConfig.robberyMinSteal + 1)) + gameConfig.robberyMinSteal;
+      const actualStolen = Math.min(stolenAmount, victim.money);
+      
+      victim.money -= actualStolen;
+      robber.money += actualStolen;
+      victim.happiness = clamp(victim.happiness - 25, 0, 100);
+      robber.happiness = clamp(robber.happiness + 30, 0, 100); // Big happiness boost from success
+      robber.depressedHours = 0; // Reset depression
+      
+      // Increase confidence on successful robbery
+      robber.robberyConfidence = Math.min(robber.robberyConfidence + 2, 20); // Max confidence 20
+      
+      addLog(`💰 ${robber.name} successfully robbed ${victim.name} and stole $${actualStolen}! Confidence increased to ${robber.robberyConfidence}.`);
+      
+      if (Math.random() < 0.05) { // 5% chance of violence
+        victim.alive = false;
+        victim.status = "Murdered during robbery";
+        victim.deathDay = state.day;
+        robber.robberyConfidence += 1; // Extra confidence from getting away with murder
+        jackpotEvent = { title: "🔪 Murder!", message: `${robber.name} robbed and KILLED ${victim.name}! The town is in shock! Confidence: ${robber.robberyConfidence}` };
+      } else {
+        jackpotEvent = { title: "💰 Robbery Success!", message: `${robber.name} successfully robbed ${victim.name} of $${actualStolen}! Their confidence is growing (${robber.robberyConfidence}).` };
+      }
+      
+      if (Math.random() < gameConfig.victimReportChance && activeCops.length > 0) {
+        addLog(`📞 ${victim.name} reported the robbery to police.`);
+      }
+    }
+    
+    // Update the robber in state
+    state.people = state.people.map(p => p.id === robber.id ? robber : p);
+  }
   
   const newAlive = state.people.filter(p => p.alive).map(p => p.id);
   const justDiedIds = oldAlive.filter(id => !newAlive.includes(id));
@@ -197,10 +435,34 @@ function advanceDay() {
 }
 
 function triggerEvent(title, message) {
+  // Add to queue instead of showing immediately
+  state.modalQueue.push({ title, message });
+  
+  // If no modal is currently showing, show the first one
+  if (els.eventModal.hidden) {
+    showNextModal();
+  }
+}
+
+function showNextModal() {
+  if (state.modalQueue.length === 0) {
+    // No more modals - this shouldn't be called, but just in case
+    return;
+  }
+  
+  // Show next modal from queue
+  const modal = state.modalQueue.shift();
   state.running = false;
+  state.modalUserClicked = false; // Reset the flag for new modal
   els.toggleRun.textContent = "Resume";
-  els.eventModalTitle.textContent = title;
-  els.eventModalBody.innerHTML = `<p>${message}</p>`;
+  els.eventModalTitle.textContent = modal.title;
+  els.eventModalBody.innerHTML = `<p>${modal.message}</p>`;
+  
+  // Show queue count if there are more modals
+  if (state.modalQueue.length > 0) {
+    els.eventModalBody.innerHTML += `<p style="margin-top: 12px; color: var(--muted); font-size: 0.9em;">📋 ${state.modalQueue.length} more event${state.modalQueue.length > 1 ? 's' : ''} waiting...</p>`;
+  }
+  
   els.eventModal.hidden = false;
   render();
 }
@@ -215,37 +477,140 @@ function checkPregnancies() {
     .filter(({ personA, personB }) => personA?.alive && personB?.alive);
 
   couples.forEach(({ personA, personB }) => {
-    const ageA = Math.floor(personA.ageDays / 365);
-    const ageB = Math.floor(personB.ageDays / 365);
+    // Count existing children
+    const existingChildren = state.people.filter(p => 
+      p.alive && p.isChild && 
+      (p.parentAId === personA.id || p.parentBId === personA.id)
+    ).length;
     
-    if (Math.random() < gameConfig.pregnancyChance) {
+    // Bonus chance for first 3 kids, reduced after that
+    let adjustedChance = gameConfig.pregnancyChance;
+    if (existingChildren === 0) adjustedChance *= 1.5; // 67.5% for first child
+    else if (existingChildren === 1) adjustedChance *= 1.2; // 54% for second child
+    else if (existingChildren >= 3) adjustedChance *= 0.5; // 22.5% after 3 kids
+    
+    if (Math.random() < adjustedChance) {
       const homeId = personA.homeId;
         const home = buildings.find(b => b.id === homeId);
         const occupants = state.people.filter(p => p.alive && p.homeId === homeId).length;
 
         // Check if there is enough space
         if (home && occupants >= home.capacity) {
-          // If no space, check if they can afford an upgrade
-          if (personA.money >= 150) {
-            personA.money -= 150;
+          // If no space, check if they can afford an upgrade (cheaper now!)
+          if (personA.money >= 100) {
+            personA.money -= 100;
             home.capacity += 2;
             home.beds += 1;
-            addLog(`${personA.name} paid $150 to upgrade their home for a new baby!`);
-          } else if (personB.money >= 150) {
-            personB.money -= 150;
+            addLog(`${personA.name} paid $100 to upgrade their home for a new baby!`);
+          } else if (personB.money >= 100) {
+            personB.money -= 100;
             home.capacity += 2;
             home.beds += 1;
-            addLog(`${personB.name} paid $150 to upgrade their home for a new baby!`);
+            addLog(`${personB.name} paid $100 to upgrade their home for a new baby!`);
           } else {
-            // Cannot afford upgrade, cancel pregnancy
-            return;
+            // Town helps with expansion if they can't afford it!
+            if (state.townTreasury >= 100) {
+              state.townTreasury -= 100;
+              home.capacity += 2;
+              home.beds += 1;
+              addLog(`🏛️ The town treasury paid $100 to help ${personA.name} and ${personB.name} expand their home for a baby!`);
+            } else {
+              // Cannot afford upgrade, cancel pregnancy
+              return;
+            }
           }
         }
 
         const child = createChild(personA, personB, state);
         state.people.push(child);
-        addLog(`${personA.name} and ${personB.name} had a baby named ${child.name}!`);
+        
+        // Bigger bonuses to encourage more kids!
+        const babyBonus = 150; // Increased from $100
+        const happinessBoost = 40; // Increased from 30
+        
+        state.people = state.people.map(p => {
+          if (p.id === personA.id || p.id === personB.id) {
+            return {
+              ...p,
+              happiness: clamp(p.happiness + happinessBoost, 0, 100),
+              money: p.money + babyBonus
+            };
+          }
+          return p;
+        });
+        
+        addLog(`👶 ${personA.name} and ${personB.name} had a baby named ${child.name}! They received $${babyBonus} baby bonus each!`);
+        triggerEvent("👶 New Baby!", `${personA.name} and ${personB.name} just had a baby named ${child.name}! The town gave them $${babyBonus * 2} total to celebrate! ${existingChildren > 0 ? `They now have ${existingChildren + 1} children!` : ''}`);
       }
+  });
+}
+
+function removeDead() {
+  const toRemove = [];
+  
+  state.people.forEach((person) => {
+    if (!person.alive && person.deathDay !== undefined) {
+      const daysSinceDeath = state.day - person.deathDay;
+      if (daysSinceDeath >= 3) {
+        toRemove.push(person.id);
+        addLog(`⚰️ ${person.name}'s body was laid to rest at the graveyard.`);
+      }
+    }
+  });
+  
+  // Remove dead people from the list
+  if (toRemove.length > 0) {
+    state.people = state.people.filter(person => !toRemove.includes(person.id));
+    
+    // Clean up relationships involving removed people
+    Object.keys(state.relationships).forEach(key => {
+      const [idA, idB] = key.split("|");
+      if (toRemove.includes(idA) || toRemove.includes(idB)) {
+        delete state.relationships[key];
+      }
+    });
+    
+    // Clean up motion and speech data
+    toRemove.forEach(id => {
+      delete state.motion[id];
+      delete state.speech[id];
+      delete state.recentTopics[id];
+    });
+    
+    // Update selected person if they were removed
+    if (toRemove.includes(state.selectedId)) {
+      const alivePerson = state.people.find(p => p.alive);
+      state.selectedId = alivePerson?.id ?? null;
+    }
+  }
+}
+
+function checkPromotions() {
+  state.people.forEach((person) => {
+    if (!person.alive || person.isChild || !person.job) return;
+    
+    // Check if eligible for promotion
+    const currentJob = jobs.find(j => j.name === person.job.title);
+    if (!currentJob || !currentJob.nextPromotion) return; // Already at top level
+    
+    // Promotion criteria: worked enough days, high happiness, good money management
+    const eligible = person.daysWorked >= currentJob.daysToPromote && person.happiness >= 70 && person.money >= 100;
+    
+    if (eligible) {
+      const newJob = jobs.find(j => j.name === currentJob.nextPromotion);
+      if (newJob) {
+        const oldWage = person.job.wage;
+        person.job = {
+          ...newJob,
+          title: newJob.name,
+        };
+        person.daysWorked = 0; // Reset days worked for next promotion
+        const raise = newJob.wage - oldWage;
+        addLog(`🎉 ${person.name} got promoted from ${currentJob.name} to ${newJob.name}! Salary increased by $${raise}/hour!`);
+        person.happiness = clamp(person.happiness + 20, 0, 100);
+        person.money += 50; // Promotion bonus
+      }
+    }
   });
 }
 
@@ -527,15 +892,74 @@ function init() {
   els.restart.addEventListener("click", resetSimulation);
 
   els.closeEventModal.addEventListener("click", () => {
-    els.eventModal.hidden = true;
-    state.running = true;
-    els.toggleRun.textContent = "Pause";
+    console.log('Continue button clicked!', 'Queue length:', state.modalQueue.length, 'Disabled:', els.closeEventModal.disabled);
+    
+    // Prevent multiple clicks during countdown
+    if (els.closeEventModal.disabled) {
+      console.log('Button is disabled, ignoring click');
+      return;
+    }
+    
+    // Mark that user clicked
+    state.modalUserClicked = true;
+    console.log('User clicked flag set to true');
+    
+    // Check if there are more modals in queue
+    if (state.modalQueue.length > 0) {
+      console.log('More modals in queue, showing next one');
+      // More modals waiting, show next one immediately
+      els.eventModal.hidden = true;
+      showNextModal();
+    } else {
+      console.log('Last modal, handling resume delay. Delay setting:', state.resumeDelay);
+      // This was the last modal, now handle resume delay
+      if (state.resumeDelay === 'never') {
+        // Manual mode - just close modal and stay paused
+        console.log('Manual mode - closing modal');
+        els.eventModal.hidden = true;
+        return;
+      }
+      
+      const delayMs = state.resumeDelay * 1000;
+      if (delayMs > 0) {
+        console.log('Adding countdown to modal, delay:', delayMs, 'ms');
+        // Add countdown to the CURRENT modal (don't close it yet)
+        const currentBody = els.eventModalBody.innerHTML;
+        
+        // Add countdown text to current modal
+        els.eventModalBody.innerHTML = currentBody + `<p style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--muted);">⏳ Resuming in ${state.resumeDelay} seconds...</p>`;
+        
+        // Disable the continue button during countdown
+        els.closeEventModal.disabled = true;
+        els.closeEventModal.style.opacity = '0.5';
+        
+        setTimeout(() => {
+          console.log('Countdown finished, resuming simulation');
+          els.eventModal.hidden = true;
+          els.closeEventModal.disabled = false;
+          els.closeEventModal.style.opacity = '1';
+          state.running = true;
+          els.toggleRun.textContent = "Pause";
+        }, delayMs);
+      } else {
+        console.log('Instant resume - closing modal immediately');
+        // Resume immediately
+        els.eventModal.hidden = true;
+        state.running = true;
+        els.toggleRun.textContent = "Pause";
+      }
+    }
   });
 
   els.speedSelect.addEventListener("change", () => {
     state.speed = Number(els.speedSelect.value);
     scheduleTick();
     scheduleSocialTick();
+  });
+
+  els.resumeDelaySelect.addEventListener("change", () => {
+    const value = els.resumeDelaySelect.value;
+    state.resumeDelay = value === 'never' ? 'never' : Number(value);
   });
 
   els.deathAge.addEventListener("input", () => {
@@ -564,6 +988,64 @@ function init() {
   els.addOfficeBtn.addEventListener("click", () => addBuilding("office"));
   els.addSchoolBtn.addEventListener("click", () => addBuilding("school"));
   els.addChurchBtn.addEventListener("click", () => addBuilding("church"));
+  els.addPersonBtn.addEventListener("click", () => {
+    // Create a new immigrant with random name
+    const usedNames = state.people.filter(p => p.alive).map(p => p.name);
+    const availableNames = names.filter(n => !usedNames.includes(n));
+    const randomName = availableNames.length > 0 
+      ? availableNames[Math.floor(Math.random() * availableNames.length)]
+      : names[Math.floor(Math.random() * names.length)];
+    
+    const age = Math.floor(Math.random() * 31) + 20; // Age 20-50
+    const gender = genders[Math.floor(Math.random() * genders.length)];
+    const jobTitle = entryLevelJobs[Math.floor(Math.random() * entryLevelJobs.length)];
+    const jobTemplate = jobs.find(j => j.name === jobTitle);
+    const startingMoney = Math.floor(Math.random() * 200) + 100; // $100-300
+    
+    // Find available home
+    const houses = buildings.filter(b => b.type === "home");
+    let assignedHome = null;
+    for (const house of houses) {
+      const occupants = state.people.filter(p => p.alive && p.homeId === house.id).length;
+      if (occupants < house.capacity) {
+        assignedHome = house;
+        break;
+      }
+    }
+    
+    const newPerson = {
+      id: `person-${Date.now()}`,
+      name: randomName,
+      ageDays: age * 365,
+      hunger: 35 + Math.floor(Math.random() * 25),
+      energy: 55 + Math.floor(Math.random() * 35),
+      happiness: 48 + Math.floor(Math.random() * 35),
+      money: startingMoney,
+      mealsMissed: 0,
+      talkedToday: 0,
+      depressedHours: 0,
+      sickHours: 0,
+      sick: false,
+      gender: gender,
+      partnerId: null,
+      alive: true,
+      status: "Just arrived",
+      locationId: assignedHome ? assignedHome.id : "town-square",
+      trait: randomItem(traits),
+      skill: randomItem(skills),
+      homeId: assignedHome ? assignedHome.id : null,
+      job: jobTemplate ? { ...jobTemplate, title: jobTemplate.name } : null,
+      daysWorked: 0,
+      isChild: false,
+      jailHoursRemaining: 0,
+      robberyConfidence: 0, // New property for robbery confidence
+    };
+    
+    state.people.push(newPerson);
+    addLog(`👋 ${newPerson.name} arrived in town from another place!`);
+    triggerEvent("👋 New Arrival!", `${newPerson.name} (${gender}, age ${age}) has arrived in town as a ${jobTemplate ? jobTemplate.name : 'job seeker'} with $${startingMoney}!`);
+    renderAll();
+  });
 
   // Start simulation
   resetSimulation();

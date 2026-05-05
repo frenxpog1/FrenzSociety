@@ -101,8 +101,8 @@ export function updateRelationship(personA, personB, place, argued, relationship
     gendersCompatible &&
     relation.friendship >= gameConfig.coupleFriendThreshold &&
     relation.romance >= gameConfig.coupleRomanceThreshold &&
-    personA.money >= 150 && personB.money >= 150 &&
-    Math.random() < 0.75
+    personA.money >= 30 && personB.money >= 30 && // Lowered from 50 to 30 - easier to marry!
+    Math.random() < 0.85 // Increased from 0.75 - more likely to marry
   ) {
     relation.couple = true;
     
@@ -122,10 +122,10 @@ export function updateRelationship(personA, personB, place, argued, relationship
 
     const updatedPeople = people.map((person) => {
       if (person.id === personA.id) {
-        return { ...person, partnerId: personB.id, money: person.money - 150, happiness: 100, locationId: church ? church.id : person.locationId, status: "Getting Married" };
+        return { ...person, partnerId: personB.id, money: person.money - 100, happiness: 100, locationId: church ? church.id : person.locationId, status: "Getting Married" };
       }
       if (person.id === personB.id) {
-        return { ...person, partnerId: personA.id, money: person.money - 150, homeId: personA.homeId, happiness: 100, locationId: church ? church.id : person.locationId, status: "Getting Married" };
+        return { ...person, partnerId: personA.id, money: person.money - 100, homeId: personA.homeId, happiness: 100, locationId: church ? church.id : person.locationId, status: "Getting Married" };
       }
       if (friendIds.includes(person.id) && church) {
         return { ...person, locationId: church.id, status: "Attending Wedding", happiness: clamp(person.happiness + 15, 0, 100) };
@@ -155,6 +155,7 @@ export function chooseConversationTopic(personA, personB, place, relation, recen
   if (place.type === "graveyard" || personA.happiness < 25 || personB.happiness < 25) topics.push("grief");
   if (personA.money < 80 || personB.money < 80) topics.push("economy");
   if (place.type === "church" || place.type === "square") topics.push("community");
+  if (personA.money <= 20 || personB.money <= 20 || personA.status === "In Jail" || personB.status === "In Jail") topics.push("robbery", "robbery");
 
   const recentA = recentTopics[personA.id] ?? [];
   const recentB = recentTopics[personB.id] ?? [];
@@ -262,6 +263,12 @@ export function conversationLinesForTopic(topic, a, b, place, relation) {
       { speaker: b.name, text: "Yes, the town feels like a real community now." },
       { speaker: a.name, text: "So much has happened recently." },
       { speaker: b.name, text: "We just have to keep moving forward together." },
+    ],
+    robbery: [
+      { speaker: a.name, text: "I heard some people are getting desperate enough to steal." },
+      { speaker: b.name, text: "With the police patrols, it is a huge risk." },
+      { speaker: a.name, text: "But when you have nothing left, jail starts to look like free food." },
+      { speaker: b.name, text: "I just hope nobody gets killed over it." },
     ],
   };
 
