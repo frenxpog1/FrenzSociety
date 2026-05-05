@@ -110,7 +110,7 @@ h2 {
 
 .controls {
   display: grid;
-  grid-template-columns: auto auto auto minmax(180px, 1fr) minmax(230px, 1fr) 130px;
+  grid-template-columns: auto auto auto auto minmax(180px, 1fr) minmax(230px, 1fr) 130px;
   gap: 12px;
   align-items: end;
   margin-bottom: 16px;
@@ -118,6 +118,10 @@ h2 {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.72);
+}
+
+.expansion-controls {
+  grid-template-columns: repeat(3, 1fr);
 }
 
 button {
@@ -268,9 +272,25 @@ input[type="range"] {
   background: #7a4d8f;
 }
 
+.school-dot {
+  background: #d46a2a;
+}
+
+.church-dot {
+  background: #4d8f7a;
+}
+
+.graveyard-dot {
+  background: #2c3e50;
+}
+
+.cinema-dot { background: #e0d0eb; }
+.mall-dot { background: #e8f0d5; }
+.casino-dot { background: #f0d5d5; }
+
 .town-map {
   position: relative;
-  min-height: 590px;
+  min-height: 680px;
   overflow: hidden;
   border: 1px solid #cbd6ca;
   border-radius: 8px;
@@ -306,9 +326,9 @@ input[type="range"] {
   display: grid;
   align-content: center;
   justify-items: center;
-  width: 96px;
-  min-height: 76px;
-  padding: 8px;
+  width: 86px;
+  min-height: 68px;
+  padding: 6px;
   border: 2px solid rgba(23, 32, 27, 0.12);
   border-radius: 8px;
   background: var(--panel);
@@ -321,21 +341,59 @@ input[type="range"] {
 }
 
 .building.office {
-  width: 130px;
-  min-height: 94px;
+  width: 116px;
+  min-height: 84px;
   background: var(--blue-soft);
 }
 
 .building.restaurant {
-  width: 146px;
-  min-height: 96px;
+  width: 126px;
+  min-height: 86px;
   background: var(--gold-soft);
 }
 
 .building.square {
-  width: 142px;
-  min-height: 90px;
+  width: 126px;
+  min-height: 80px;
   background: #eadff0;
+}
+
+.building.school {
+  width: 126px;
+  min-height: 80px;
+  background: #fae4d7;
+}
+
+.building.church {
+  width: 98px;
+  min-height: 104px;
+  background: #dff0ea;
+}
+
+.building.graveyard {
+  width: 104px;
+  min-height: 80px;
+  background: #2c3e50;
+  color: #ecf0f1;
+  border: 2px solid #1a252f;
+}
+
+.building.cinema {
+  width: 100px;
+  min-height: 80px;
+  background: #e0d0eb;
+}
+
+.building.mall {
+  width: 110px;
+  min-height: 90px;
+  background: #e8f0d5;
+}
+
+.building.casino {
+  width: 106px;
+  min-height: 80px;
+  background: #f0d5d5;
 }
 
 .building strong {

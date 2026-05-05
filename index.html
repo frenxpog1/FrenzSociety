@@ -22,6 +22,7 @@
       <section class="controls" aria-label="Simulation controls">
         <button id="toggleRun" class="primary-button" type="button">Pause</button>
         <button id="stepHour" type="button">Step 1 Hour</button>
+        <button id="stepDay" type="button">Skip 1 Day</button>
         <button id="restart" type="button">Restart</button>
 
         <label>
@@ -45,6 +46,12 @@
           Humans
           <input id="populationSize" type="number" min="10" max="15" value="12" />
         </label>
+      </section>
+
+      <section class="controls expansion-controls" aria-label="Town expansion">
+        <button id="addOfficeBtn" type="button">Add Office</button>
+        <button id="addSchoolBtn" type="button">Add School</button>
+        <button id="addChurchBtn" type="button">Add Church</button>
       </section>
 
       <section class="stats-grid" aria-label="Town stats">
@@ -76,6 +83,18 @@
           <span>Couples</span>
           <strong id="couplesStat">0</strong>
         </article>
+        <article>
+          <span>Kids</span>
+          <strong id="kidsStat">0</strong>
+        </article>
+        <article>
+          <span>Graveyard</span>
+          <strong id="graveyardStat">0</strong>
+        </article>
+        <article>
+          <span>Treasury</span>
+          <strong id="treasuryStat">$0</strong>
+        </article>
       </section>
 
       <section class="town-layout">
@@ -87,6 +106,12 @@
               <span><i class="office-dot"></i>Office</span>
               <span><i class="food-dot"></i>Restaurant</span>
               <span><i class="square-dot"></i>Town Square</span>
+              <span><i class="school-dot"></i>School</span>
+              <span><i class="church-dot"></i>Church</span>
+              <span><i class="graveyard-dot"></i>Graveyard</span>
+              <span><i class="cinema-dot"></i>Cinema</span>
+              <span><i class="mall-dot"></i>Mall</span>
+              <span><i class="casino-dot"></i>Casino</span>
             </div>
           </div>
           <div id="townMap" class="town-map" aria-label="Town map"></div>
@@ -126,6 +151,14 @@
       </section>
     </div>
 
-    <script src="simulator.js"></script>
+    <div id="eventModal" class="modal-backdrop" hidden style="z-index: 1000;">
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="eventModalTitle" style="text-align: center; max-width: 400px;">
+        <h2 id="eventModalTitle" style="color: var(--green); margin-bottom: 12px; font-size: 24px;">Town Event!</h2>
+        <div id="eventModalBody" class="modal-body" style="font-size: 16px; margin-bottom: 20px;"></div>
+        <button id="closeEventModal" type="button" class="primary-button" style="width: 100%; font-size: 16px; padding: 12px;">Continue</button>
+      </section>
+    </div>
+
+    <script type="module" src="src/app.js"></script>
   </body>
 </html>

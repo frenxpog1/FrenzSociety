@@ -38,9 +38,16 @@ A browser-based life simulation game where you can watch AI-driven characters li
 ## 🎯 How to Play
 
 ### Getting Started
-1. Open `index.html` in a modern web browser
-2. The simulation starts automatically with 12 characters
-3. Watch as characters live their lives autonomously
+
+**Run the Development Server:**
+```bash
+./start-dev.sh
+# Or manually: python3 -m http.server 8000
+```
+
+Then open **http://localhost:8000** in your browser.
+
+The simulation starts automatically with 12 characters.
 
 ### Controls
 - **Pause/Resume** - Stop or continue the simulation
@@ -96,11 +103,40 @@ A browser-based life simulation game where you can watch AI-driven characters li
 
 ```
 town-life-simulator/
-├── index.html          # Main HTML structure
-├── simulator.js        # Core simulation logic (1,280 lines)
-├── styles.css          # Complete styling and responsive design
-└── README.md           # This file
+├── index.html              # Main entry point
+├── styles.css              # Complete styling
+├── src/                    # Modular source code
+│   ├── app.js             # Main application
+│   ├── constants.js       # Game configuration
+│   ├── utils.js           # Utility functions
+│   ├── state.js           # State management
+│   ├── people.js          # Character system
+│   ├── relationships.js   # Social dynamics
+│   ├── simulation.js      # Core game loop
+│   ├── interactions.js    # Conversations
+│   ├── render.js          # UI rendering
+│   └── animation.js       # Movement
+├── README.md              # This file
+├── HOW-TO-USE.md          # Usage guide
+├── DEVELOPMENT.md         # Development guide
+├── CHANGELOG.md           # Change history
+└── package.json           # Project configuration
 ```
+
+## 🔧 Development
+
+See [HOW-TO-USE.md](HOW-TO-USE.md) for detailed instructions.
+
+**Quick Start:**
+```bash
+# Start development server
+./start-dev.sh
+
+# Or manually
+python3 -m http.server 8000
+```
+
+The project uses ES6 modules for clean, maintainable code.
 
 ## 🎨 Design Features
 

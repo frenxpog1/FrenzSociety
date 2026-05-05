@@ -1,0 +1,13 @@
+{
+  "name": "town-life-simulator",
+  "version": "1.0.0",
+  "description": "A browser-based life simulation game",
+  "type": "module",
+  "scripts": {
+    "dev": "python3 -m http.server 8000",
+    "start": "python3 -m http.server 8000"
+  },
+  "keywords": ["simulation", "game", "javascript"],
+  "author": "",
+  "license": "MIT"
+}
