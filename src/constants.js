@@ -59,17 +59,17 @@ export const entryLevelJobs = [
 ];
 
 export const gameConfig = {
-  mealCost: 12,
+  mealCost: 8,                     // Reduced from 12 - cheaper food!
   hospitalCost: 30,
   lowMoneyLine: 25,
   friendThreshold: 20,
   closeFriendThreshold: 35,
-  crushThreshold: 15,              // Lowered from 25
-  coupleFriendThreshold: 25,       // Lowered from 35
-  coupleRomanceThreshold: 30,      // Lowered from 45
+  crushThreshold: 5,               // Lowered from 10 - very easy to develop crushes
+  coupleFriendThreshold: 10,       // Lowered from 15 - VERY easy to become couples
+  coupleRomanceThreshold: 10,      // Lowered from 15 - VERY easy to become couples
   enemyConflictThreshold: 45,
   childAdultAge: 18,               // Age when children become adults
-  pregnancyChance: 0.45,           // 45% chance per day for couples (increased to encourage more kids)
+  pregnancyChance: 0.95,           // 95% chance per day for couples (EXTREMELY HIGH!)
   casinoStartingBalance: 5000,     // Casino starts with $5000
   casinoBrokeThreshold: 100,       // Casino closes if balance < $100
   robberyChance: 0.05,             // 5% chance per hour for desperate people
@@ -78,6 +78,11 @@ export const gameConfig = {
   copCatchChance: 0.7,             // 70% chance cop catches robber
   victimReportChance: 0.3,         // 30% chance victim reports if no cop
   jailTimeHours: 24,               // Hours spent in jail
+  gamblingAddictChance: 0.20,      // 20% of population are gambling addicts (1 per 5 people)
+  careerCriminalRatio: 8,          // 1 career criminal per 8 people
+  serialKillerMinPop: 30,          // Serial killer appears when pop > 30
+  serialKillerSpawnChance: 0.02,   // 2% chance per day to RESPAWN serial killer (first spawn is guaranteed)
+  serialKillerKillInterval: 3,     // Serial killer kills every 3 days
 };
 
 export const buildings = [

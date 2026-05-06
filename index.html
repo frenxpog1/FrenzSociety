@@ -35,6 +35,17 @@
             <option value="30">Turbo</option>
           </select>
         </label>
+        
+        <label>
+          Auto-Resume Delay
+          <select id="resumeDelaySelect">
+            <option value="0" selected>Instant</option>
+            <option value="2">2 seconds</option>
+            <option value="5">5 seconds</option>
+            <option value="10">10 seconds</option>
+            <option value="never">Never (Manual)</option>
+          </select>
+        </label>
 
         <label>
           Old Age Death
@@ -44,14 +55,14 @@
 
         <label>
           Humans
-          <input id="populationSize" type="number" min="10" max="15" value="12" />
+          <input id="populationSize" type="number" min="10" max="30" value="15" />
         </label>
       </section>
 
       <section class="controls expansion-controls" aria-label="Town expansion">
-        <button id="addOfficeBtn" type="button">Add Office</button>
         <button id="addSchoolBtn" type="button">Add School</button>
         <button id="addChurchBtn" type="button">Add Church</button>
+        <button id="addPersonBtn" type="button">Add New Person</button>
       </section>
 
       <section class="stats-grid" aria-label="Town stats">
@@ -95,6 +106,14 @@
           <span>Treasury</span>
           <strong id="treasuryStat">$0</strong>
         </article>
+        <article>
+          <span>Casino Bank</span>
+          <strong id="casinoStat">$5000</strong>
+        </article>
+        <article>
+          <span>In Jail</span>
+          <strong id="jailStat">0</strong>
+        </article>
       </section>
 
       <section class="town-layout">
@@ -109,8 +128,9 @@
               <span><i class="school-dot"></i>School</span>
               <span><i class="church-dot"></i>Church</span>
               <span><i class="graveyard-dot"></i>Graveyard</span>
-              <span><i class="cinema-dot"></i>Cinema</span>
-              <span><i class="mall-dot"></i>Mall</span>
+              <span><i class="jail-dot"></i>Jail</span>
+              <span><i class="police-dot"></i>Police Station</span>
+              <span><i class="hospital-dot"></i>Hospital</span>
               <span><i class="casino-dot"></i>Casino</span>
             </div>
           </div>

@@ -171,7 +171,7 @@ export function updatePerson(person, state, addLogFn) {
         next.energy = clamp(next.energy - 10, 0, 100);
         // Bet tracked for casino balance
         
-        if (Math.random() < 0.61) { // 61% chance to win
+        if (Math.random() < 0.45) { // 45% chance to win
           const winnings = allIn * 2;
           next.casinoPayout = winnings; // Casino pays out
           const tax = Math.floor(winnings * 0.2);
@@ -219,7 +219,7 @@ export function updatePerson(person, state, addLogFn) {
           next.energy = clamp(next.energy - 8, 0, 100);
           // Bet tracked for casino balance
           
-          if (Math.random() < 0.61) { // 61% chance to win
+          if (Math.random() < 0.45) { // 45% chance to win
             const winnings = bet * 2;
             next.casinoPayout = winnings; // Casino pays out
             const tax = Math.floor(winnings * 0.2);
@@ -397,12 +397,15 @@ export function updatePerson(person, state, addLogFn) {
     return next;
   }
 
-  // Crime logic (Robbery) - people with low money target the rich
-  if (next.money <= 30 && next.happiness < 40 && !isPolice && !next.isChild) {
-    // Higher chance based on desperation and confidence
-    const baseChance = gameConfig.robberyChance * 3; // 15% base chance (was 5%)
-    const confidenceBonus = (next.robberyConfidence || 0) * 0.02; // +2% per confidence point
-    const robberyChance = Math.min(baseChance + confidenceBonus, 0.5); // Max 50% chance
+  // Crime logic (Robbery) - career criminals rob often, desperate people rob sometimes
+  const isCareerCriminal = next.isCareerCriminal || false;
+  const shouldRob = isCareerCriminal || (next.money <= 40 && next.happiness < 50);
+  
+  if (shouldRob && !isPolice && !next.isChild) {
+    // Career criminals rob much more often
+    const baseChance = isCareerCriminal ? 0.6 : (gameConfig.robberyChance * 8); // 60% for criminals, 40% for desperate (increased)
+    const confidenceBonus = (next.robberyConfidence || 0) * 0.02;
+    const robberyChance = Math.min(baseChance + confidenceBonus, isCareerCriminal ? 0.9 : 0.7); // Max 90% for criminals, 70% for desperate
     
     if (Math.random() < robberyChance) {
       // Initialize robbery confidence if not set
@@ -467,7 +470,7 @@ export function updatePerson(person, state, addLogFn) {
     next.money += netWage;
     next.treasuryContribution = (next.treasuryContribution || 0) + incomeTax;
     next.energy = clamp(next.energy - 3, 0, 100);
-    next.happiness = clamp(next.happiness - (next.sick ? 12 : 6), 0, 100); // Massive happiness drain
+    next.happiness = clamp(next.happiness - (next.sick ? 8 : 2), 0, 100); // Reduced from 12/6 to 8/2 - work drains less happiness!
     return next;
   }
 
@@ -480,7 +483,7 @@ export function updatePerson(person, state, addLogFn) {
     next.money += netWage;
     next.treasuryContribution = (next.treasuryContribution || 0) + incomeTax;
     next.energy = clamp(next.energy - 8, 0, 100);
-    next.happiness = clamp(next.happiness - 12, 0, 100); // Brutal overtime drain
+    next.happiness = clamp(next.happiness - 6, 0, 100); // Reduced from 12 - less brutal
     return next;
   }
 
@@ -501,17 +504,18 @@ export function updatePerson(person, state, addLogFn) {
   // Entertainment & Gambling logic - NO COOLDOWN, SPAM AWAY!
   if (next.gamblingAddiction === undefined) next.gamblingAddiction = 0;
   const needsFun = next.happiness <= 70 || next.gamblingAddiction > 15;
+  
+  // Check if casino is broke
+  const casinoBroke = state.casinoBankroll <= 0;
 
-  if (state.hour >= 17 && state.hour <= 23 && needsFun && next.money >= 35) {
+  if (state.hour >= 17 && state.hour <= 23 && needsFun && next.money >= 20) { // Lowered from 35 to 20
     const entertainment = buildings.filter(b => ["cinema", "casino"].includes(b.type));
-    if (entertainment.length > 0 && Math.random() < 0.5) { // 50% chance to go
+    if (entertainment.length > 0 && Math.random() < 0.7) { // Increased from 0.5 to 0.7 - 70% chance to go!
       
       let place;
       if (next.gamblingAddiction > 15 && Math.random() < 0.8) {
-        // Check if casino is broke
-        const casinoBroke = state.casinoBankroll <= 0;
+        // Addicts prefer casino, but if it's broke they go to town square
         if (casinoBroke) {
-          // Casino is broke, hang out at town square instead
           next.locationId = "town-square";
           next.status = "Casino closed - hanging out";
           next.happiness = clamp(next.happiness + 10, 0, 100);
@@ -524,12 +528,25 @@ export function updatePerson(person, state, addLogFn) {
           }
           return next;
         }
-        place = entertainment.find(b => b.type === "casino"); // Addicts prefer casino
+        place = entertainment.find(b => b.type === "casino");
       } else {
-        place = entertainment[Math.floor(Math.random() * entertainment.length)];
+        // Random choice, but skip casino if broke
+        const availableEntertainment = casinoBroke 
+          ? entertainment.filter(b => b.type !== "casino")
+          : entertainment;
+        place = availableEntertainment[Math.floor(Math.random() * availableEntertainment.length)];
       }
 
       if (place) {
+        // Double-check casino isn't broke before allowing gambling
+        if (place.type === "casino" && casinoBroke) {
+          next.locationId = "town-square";
+          next.status = "Casino closed - hanging out";
+          next.happiness = clamp(next.happiness + 10, 0, 100);
+          next.energy = clamp(next.energy - 5, 0, 100);
+          return next;
+        }
+        
         next.locationId = place.id;
         next.energy = clamp(next.energy - 10, 0, 100);
 
@@ -539,7 +556,7 @@ export function updatePerson(person, state, addLogFn) {
           const bet = Math.min(next.money, 40 + (next.gamblingAddiction * 3)); // Addicts bet more!
           next.money -= bet;
           // Bet tracked for casino balance
-          if (Math.random() < 0.61) { // 61% chance to win
+          if (Math.random() < 0.45) { // 45% chance to win
             const winnings = bet * 2;
             next.casinoPayout = winnings; // Casino pays out
             const tax = Math.floor(winnings * 0.2);
@@ -589,7 +606,7 @@ export function updatePerson(person, state, addLogFn) {
     next.locationId = "restaurant";
     next.status = "Socializing";
     next.energy = clamp(next.energy - 1, 0, 100);
-    next.happiness = clamp(next.happiness + 4, 0, 100);
+    next.happiness = clamp(next.happiness + 8, 0, 100); // Increased from 4 to 8
     return next;
   }
 

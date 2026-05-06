@@ -284,8 +284,9 @@ input[type="range"] {
   background: #2c3e50;
 }
 
-.cinema-dot { background: #e0d0eb; }
-.mall-dot { background: #e8f0d5; }
+.jail-dot { background: #555555; }
+.police-dot { background: #1a365d; }
+.hospital-dot { background: #d5f0e8; }
 .casino-dot { background: #f0d5d5; }
 
 .town-map {
@@ -378,13 +379,21 @@ input[type="range"] {
   border: 2px solid #1a252f;
 }
 
-.building.cinema {
-  width: 100px;
+.building.jail {
+  width: 90px;
   min-height: 80px;
-  background: #e0d0eb;
+  background: #7a7a7a;
+  color: #ecf0f1;
+  border: 2px solid #333333;
 }
 
-.building.mall {
+.building.police {
+  width: 100px;
+  min-height: 80px;
+  background: #b9cce4;
+}
+
+.building.hospital {
   width: 110px;
   min-height: 90px;
   background: #e8f0d5;

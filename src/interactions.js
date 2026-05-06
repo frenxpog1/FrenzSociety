@@ -68,7 +68,7 @@ export function updateRelationship(personA, personB, place, argued, relationship
     !personA.partnerId && 
     !personB.partnerId &&
     gendersCompatible
-      ? 8 + (place.id === "restaurant" || place.id === "town-square" ? 6 : 0)
+      ? 30 + (place.id === "restaurant" || place.id === "town-square" ? 20 : 0) // Increased to 30 + 20 = 50 total!
       : 0;
 
   relation.friendship = clamp(relation.friendship + friendshipGain, 0, 100);
@@ -101,8 +101,8 @@ export function updateRelationship(personA, personB, place, argued, relationship
     gendersCompatible &&
     relation.friendship >= gameConfig.coupleFriendThreshold &&
     relation.romance >= gameConfig.coupleRomanceThreshold &&
-    personA.money >= 30 && personB.money >= 30 && // Lowered from 50 to 30 - easier to marry!
-    Math.random() < 0.85 // Increased from 0.75 - more likely to marry
+    personA.money >= 10 && personB.money >= 10 && // Lowered from 20 to 10 - VERY easy to marry!
+    Math.random() < 0.98 // Increased from 0.95 - almost guaranteed to marry when ready
   ) {
     relation.couple = true;
     
@@ -122,13 +122,14 @@ export function updateRelationship(personA, personB, place, argued, relationship
 
     const updatedPeople = people.map((person) => {
       if (person.id === personA.id) {
-        return { ...person, partnerId: personB.id, money: person.money - 100, happiness: 100, locationId: church ? church.id : person.locationId, status: "Getting Married" };
+        return { ...person, partnerId: personB.id, money: person.money - 20, happiness: 100, locationId: church ? church.id : person.locationId, status: "Getting Married" };
       }
       if (person.id === personB.id) {
-        return { ...person, partnerId: personA.id, money: person.money - 100, homeId: personA.homeId, happiness: 100, locationId: church ? church.id : person.locationId, status: "Getting Married" };
+        return { ...person, partnerId: personA.id, money: person.money - 20, homeId: personA.homeId, happiness: 100, locationId: church ? church.id : person.locationId, status: "Getting Married" };
       }
       if (friendIds.includes(person.id) && church) {
-        return { ...person, locationId: church.id, status: "Attending Wedding", happiness: clamp(person.happiness + 15, 0, 100) };
+        // Wedding guests get HUGE happiness boost to encourage more marriages
+        return { ...person, locationId: church.id, status: "Attending Wedding", happiness: clamp(person.happiness + 35, 0, 100) };
       }
       return person;
     });

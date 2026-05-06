@@ -1,9 +1,9 @@
 // Rendering and UI updates
-import { buildings, gameConfig } from './constants.js';
+import { buildings, gameConfig, jobs } from './constants.js';
 import { formatHour, clamp } from './utils.js';
 import { getPerson } from './people.js';
 import { relationshipSummary, getRelationshipEntries } from './relationships.js';
-import { buildingOccupancy } from './simulation.js';
+import { buildingOccupancy, homeOccupancy } from './simulation.js';
 
 export function getBuilding(id) {
   return buildings.find((building) => building.id === id);
@@ -30,6 +30,8 @@ export function renderStats(state, els) {
   
   if (els.kidsStat) els.kidsStat.textContent = alive.filter((person) => person.isChild).length;
   if (els.treasuryStat) els.treasuryStat.textContent = `$${Math.floor(state.townTreasury)}`;
+  if (els.casinoStat) els.casinoStat.textContent = `$${Math.floor(state.casinoBankroll)}`;
+  if (els.jailStat) els.jailStat.textContent = alive.filter((person) => person.jailHoursRemaining > 0).length;
 }
 
 export function renderMap(state, els, selectPersonFn) {
@@ -48,7 +50,7 @@ export function renderMap(state, els, selectPersonFn) {
     node.style.transform = "translate(-50%, -50%)";
     const meta =
       building.type === "home"
-        ? `${buildingOccupancy(state.people, building.id)}/${building.capacity} people, ${building.beds} bed`
+        ? `${homeOccupancy(state.people, building.id)}/${building.capacity} people, ${building.beds} bed`
         : `${buildingOccupancy(state.people, building.id)} people`;
     node.innerHTML = `<strong>${building.name}</strong><span>${meta}</span>`;
     els.townMap.appendChild(node);
@@ -208,8 +210,12 @@ export function renderDetails(state, els, openFriendModalFn) {
     ${!person.isChild ? `<div class="detail-line"><span>Partner</span><strong>${summary.partner?.name ?? "None"}</strong></div>` : ''}
     ${!person.isChild ? `<div class="detail-line"><span>Best Friend</span><strong>${summary.bestFriend ? `${summary.bestFriend.person.name} (${summary.bestFriend.relation.friendship})` : "None"}</strong></div>` : ''}
     <div class="detail-line"><span>Job</span><strong>${person.isChild ? 'Too young to work' : (person.job?.title ?? "Unemployed")}</strong></div>
-    ${!person.isChild && person.job ? `<div class="detail-line"><span>Wage</span><strong>${person.job.wage}/hour</strong></div>` : ''}
+    ${!person.isChild && person.job ? `<div class="detail-line"><span>Wage</span><strong>$${person.job.wage}/hour</strong></div>` : ''}
+    ${!person.isChild && person.job && person.job.nextPromotion ? `<div class="detail-line"><span>Days Worked</span><strong>${person.daysWorked || 0}/${jobs.find(j => j.name === person.job.title)?.daysToPromote || '?'} (Next: ${person.job.nextPromotion})</strong></div>` : ''}
+    ${!person.isChild && person.job && !person.job.nextPromotion ? `<div class="detail-line"><span>Rank</span><strong>MAX LEVEL ⭐</strong></div>` : ''}
     <div class="detail-line"><span>Health</span><strong>${person.sick ? `Sick for ${person.sickHours} hours` : "Healthy"}</strong></div>
+    ${person.jailHoursRemaining > 0 ? `<div class="detail-line"><span>Jail Time</span><strong style="color: #ff4444;">${person.jailHoursRemaining} hours remaining</strong></div>` : ''}
+    ${!person.isChild && person.robberyConfidence > 0 ? `<div class="detail-line"><span>Robbery Confidence</span><strong style="color: #ff8800;">${person.robberyConfidence}/20</strong></div>` : ''}
     <div class="detail-line"><span>Trait</span><strong>${person.trait}</strong></div>
     <div class="detail-line"><span>Skill</span><strong>${person.skill}</strong></div>
     <div class="detail-line"><span>Hunger</span><strong>${Math.round(person.hunger)}%</strong></div>

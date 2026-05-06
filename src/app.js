@@ -66,6 +66,7 @@ function resetSimulation() {
   state.selectedId = state.people[0]?.id ?? null;
   state.eventLog = [];
   state.conversations = [];
+  state.serialKillerEverSpawned = false; // Reset serial killer spawn flag
   addLog(`${state.people.length} humans moved into 10 houses.`);
   addLog(`The town opened 2 offices, 1 restaurant, and meals cost ${gameConfig.mealCost}.`);
   render();
@@ -79,8 +80,8 @@ function advanceHour(skipRender = false) {
     state.people = state.people.map((person) => {
       let money = person.money;
       if (!person.isChild && person.alive) {
-        // Daily expenses: $15 rent + $5 tax
-        const dailyExpenses = 20;
+        // Daily expenses: $10 rent + $3 tax (reduced from $15 + $5)
+        const dailyExpenses = 13;
         if (money >= dailyExpenses) {
           money -= dailyExpenses;
           state.townTreasury += dailyExpenses;
@@ -117,25 +118,42 @@ function advanceHour(skipRender = false) {
         state.townTreasury += excess;
         state.casinoBankroll = 5000;
         addLog(`The Casino transferred $${Math.floor(excess)} in weekly profits to the Town Treasury.`);
+      } else if (state.casinoBankroll < 5000) {
+        // Casino gets refilled to $5000 from town investment
+        const refill = 5000 - state.casinoBankroll;
+        state.casinoBankroll = 5000;
+        addLog(`🎰 The Casino was refilled to $5000 (added $${refill}) for the new week!`);
       }
       if (state.townTreasury > 0) {
         const alivePeople = state.people.filter(p => p.alive && !p.isChild);
         if (alivePeople.length > 0) {
-          const redistributionAmount = Math.floor(state.townTreasury * 0.5);
+          const redistributionAmount = Math.floor(state.townTreasury * 0.9); // 90% of treasury (was 50%)
           const perPerson = Math.floor(redistributionAmount / alivePeople.length);
           
-          if (perPerson > 0) {
+          // Calculate need-based distribution - poor people get more
+          const maxMoney = Math.max(...alivePeople.map(p => p.money), 1);
+          const needScores = alivePeople.map(person => ({
+            person,
+            needScore: maxMoney - person.money + 10 // Inverse - poorer = higher score
+          }));
+          const totalNeed = needScores.reduce((sum, item) => sum + item.needScore, 0);
+          
+          if (totalNeed > 0) {
             state.people = state.people.map(person => {
               if (person.alive && !person.isChild) {
-                return { ...person, money: person.money + perPerson };
+                const needItem = needScores.find(item => item.person.id === person.id);
+                if (needItem) {
+                  const share = Math.floor((needItem.needScore / totalNeed) * redistributionAmount);
+                  return { ...person, money: person.money + share };
+                }
               }
               return person;
             });
             
             state.townTreasury -= redistributionAmount;
-            addLog(`💰 Weekly redistribution! Each person received $${perPerson} from the treasury. Treasury: $${state.townTreasury}`);
+            addLog(`💰 Weekly redistribution! $${redistributionAmount} distributed based on need (poor get more).`);
             
-            triggerEvent("💰 Treasury Redistribution", `The town distributed $${redistributionAmount} to all ${alivePeople.length} citizens! Each person received $${perPerson}. Time to gamble!`);
+            triggerEvent("💰 Treasury Redistribution", `The town distributed $${redistributionAmount} (90% of treasury) based on need! Poor people received more!`);
           }
         }
       }
@@ -198,6 +216,47 @@ function advanceHour(skipRender = false) {
       }
     });
     
+    // Serial Killer System - GUARANTEED spawn when population > 30, then 2% respawn chance
+    const aliveAdultsCount = aliveAdults.length;
+    const serialKiller = state.people.find(p => p.alive && p.isSerialKiller);
+    
+    // First spawn is GUARANTEED when population reaches threshold
+    // After that, only 2% chance to respawn if killed/caught
+    const shouldSpawn = !state.serialKillerEverSpawned 
+      ? true // GUARANTEED first spawn
+      : Math.random() < 0.02; // 2% chance to respawn
+    
+    if (aliveAdultsCount >= gameConfig.serialKillerMinPop && !serialKiller && shouldSpawn) {
+      // Spawn a serial killer from existing population
+      const candidates = aliveAdults.filter(p => !p.isSerialKiller && !p.isChild);
+      if (candidates.length > 0) {
+        const chosen = candidates[Math.floor(Math.random() * candidates.length)];
+        chosen.isSerialKiller = true;
+        chosen.lastKillDay = state.day;
+        state.serialKillerEverSpawned = true; // Mark that serial killer has spawned
+        
+        const spawnType = state.serialKillerEverSpawned ? "returned" : "emerged";
+        addLog(`🔪 A serial killer has ${spawnType} in the town... ${chosen.name} has dark secrets.`);
+        triggerEvent("🔪 SERIAL KILLER EMERGES!", `⚠️ WARNING ⚠️\n\nA serial killer is now among us!\n\n${chosen.name} has begun their reign of terror. They will kill every 3 days. The town is in danger!`);
+      }
+    }
+    
+    // Serial killer kills every 3 days
+    if (serialKiller && state.day - serialKiller.lastKillDay >= gameConfig.serialKillerKillInterval) {
+      const victims = state.people.filter(p => p.alive && p.id !== serialKiller.id && !p.isChild);
+      if (victims.length > 0) {
+        const victim = victims[Math.floor(Math.random() * victims.length)];
+        victim.alive = false;
+        victim.status = "Murdered by serial killer";
+        victim.deathDay = state.day;
+        serialKiller.lastKillDay = state.day;
+        serialKiller.robberyConfidence = Math.min((serialKiller.robberyConfidence || 0) + 5, 20);
+        
+        addLog(`🔪💀 ${victim.name} was found dead! The serial killer has struck again!`);
+        triggerEvent("🔪 MURDER!", `${victim.name} was brutally murdered!\n\nThe serial killer (${serialKiller.name}) has struck again! The body was found this morning. The town is terrified!`);
+      }
+    }
+    
     // Check for pregnancies once per day
     checkPregnancies();
     
@@ -222,6 +281,25 @@ function advanceHour(skipRender = false) {
       }
     });
     
+    // House capacity upgrade system - residents can pool money to upgrade
+    const houses = buildings.filter(b => b.type === "home");
+    houses.forEach(house => {
+      const residents = state.people.filter(p => p.alive && p.homeId === house.id && !p.isChild);
+      const occupants = state.people.filter(p => p.alive && p.homeId === house.id);
+      
+      // If house is at or near capacity and residents have money
+      if (occupants.length >= house.capacity - 1 && residents.length > 0) {
+        // Check if any resident can afford upgrade
+        const richResident = residents.find(r => r.money >= 150);
+        if (richResident && Math.random() < 0.3) { // 30% chance per day
+          richResident.money -= 150;
+          house.capacity += 2;
+          house.beds += 1;
+          addLog(`🏠 ${richResident.name} upgraded ${house.name} capacity to ${house.capacity} people for $150!`);
+        }
+      }
+    });
+    
     // Check if anyone needs and can afford a new house
     state.people.forEach(person => {
       // If adult and they have more than 250 money, they might buy a house
@@ -242,14 +320,6 @@ function advanceHour(skipRender = false) {
         }
       }
     });
-
-    // Autonomous town expansion if heavily crowded and no one bought a house
-    const totalCapacity = buildings.filter(b => b.type === "home").reduce((sum, b) => sum + b.capacity, 0);
-    const totalAlive = state.people.filter(p => p.alive).length;
-    if (totalAlive >= totalCapacity) {
-      const house = addBuilding("home");
-      if (house) addLog(`The town expanded! A new house was built automatically for the growing population.`);
-    }
   }
 
   const oldAlive = state.people.filter(p => p.alive).map(p => p.id);
@@ -278,6 +348,7 @@ function advanceHour(skipRender = false) {
         const actualPayout = Math.max(0, state.casinoBankroll);
         state.casinoBankroll = 0;
         console.log(`Casino broke! Could only pay ${actualPayout} of ${updated.casinoPayout}`);
+        addLog(`🎰💸 CASINO BROKE! Could only pay ${actualPayout} of ${updated.casinoPayout}. Balance: $0`);
       }
       delete updated.casinoPayout;
     }
@@ -304,20 +375,27 @@ function advanceHour(skipRender = false) {
     // Check if cops on patrol
     const activeCops = state.people.filter(p => p.alive && p.job?.title.includes("Police") && isWorkHour(p, state.hour));
     
+    // Serial killers are MUCH harder to catch - they're professionals
+    const isSerialKiller = robber.isSerialKiller || false;
+    
     // Confidence affects success rate - higher confidence = better at avoiding cops
-    const baseDetectionRate = activeCops.length > 0 ? 0.7 : 0;
-    const confidenceBonus = Math.min(robber.robberyConfidence * 0.05, 0.4); // Max 40% bonus
-    const actualDetectionRate = Math.max(baseDetectionRate - confidenceBonus, 0.2); // Min 20% if cops present
+    const baseDetectionRate = activeCops.length > 0 ? (isSerialKiller ? 0.15 : 0.7) : 0; // Serial killers: 15% base vs 70% normal
+    const confidenceBonus = Math.min(robber.robberyConfidence * 0.05, isSerialKiller ? 0.8 : 0.4); // Serial killers get up to 80% bonus
+    const actualDetectionRate = Math.max(baseDetectionRate - confidenceBonus, isSerialKiller ? 0.02 : 0.2); // Serial killers: min 2% vs 20% normal
     
     if (activeCops.length > 0 && Math.random() < actualDetectionRate) {
       // CAUGHT BY POLICE
       const cop = activeCops[Math.floor(Math.random() * activeCops.length)];
       
-      // Reset confidence on getting caught
-      robber.robberyConfidence = Math.max(0, robber.robberyConfidence - 3);
+      // Serial killers are EXTREMELY dangerous when cornered
+      const fightBackChance = isSerialKiller ? 0.8 : 0.1; // 80% for serial killers vs 10% normal
+      const lethalChance = isSerialKiller ? 0.9 : 0.4; // 90% lethal for serial killers vs 40% normal
       
-      if (Math.random() < 0.1) { // 10% chance the robber fights back
-        if (Math.random() < 0.4) { // 40% chance the fight is lethal for the cop
+      // Reset confidence on getting caught (serial killers lose less)
+      robber.robberyConfidence = Math.max(0, robber.robberyConfidence - (isSerialKiller ? 1 : 3));
+      
+      if (Math.random() < fightBackChance) { // Serial killers almost always fight back
+        if (Math.random() < lethalChance) { // Serial killers are deadly
           cop.alive = false;
           cop.status = "Killed in the line of duty";
           cop.deathDay = state.day;
@@ -325,23 +403,46 @@ function advanceHour(skipRender = false) {
           victim.money -= stolen;
           robber.money += stolen;
           robber.happiness = clamp(robber.happiness + 20, 0, 100);
-          jackpotEvent = { title: "🚓 Officer Down!", message: `Tragedy strikes! Officer ${cop.name} was shot and killed while trying to stop ${robber.name} from robbing ${victim.name}!` };
+          
+          if (isSerialKiller) {
+            robber.robberyConfidence = Math.min(robber.robberyConfidence + 3, 20); // Serial killer gains confidence from killing cop
+            jackpotEvent = { title: "🔪🚓 COP MURDERED!", message: `The serial killer ${robber.name} was cornered by Officer ${cop.name}... and KILLED THE COP! They escaped with the money. The town is terrified!` };
+          } else {
+            jackpotEvent = { title: "🚓 Officer Down!", message: `Tragedy strikes! Officer ${cop.name} was shot and killed while trying to stop ${robber.name} from robbing ${victim.name}!` };
+          }
         } else {
           robber.locationId = "jail-1";
-          robber.jailHoursRemaining = 120; // 5 days
+          robber.jailHoursRemaining = isSerialKiller ? 240 : 120; // Serial killers get 10 days vs 5 days
           robber.happiness = clamp(robber.happiness - 40, 0, 100);
-          jackpotEvent = { title: "🔫 Shootout!", message: `Officer ${cop.name} was injured in a violent shootout, but managed to arrest ${robber.name}! They get 5 days in jail. Confidence: ${robber.robberyConfidence}` };
+          
+          if (isSerialKiller) {
+            robber.isSerialKiller = false; // Lose serial killer status when caught
+            jackpotEvent = { title: "🔪 SERIAL KILLER CAUGHT!", message: `After a violent shootout, Officer ${cop.name} managed to capture the serial killer ${robber.name}! They're sentenced to 10 days in jail. The town can finally breathe...` };
+          } else {
+            jackpotEvent = { title: "🔫 Shootout!", message: `Officer ${cop.name} was injured in a violent shootout, but managed to arrest ${robber.name}! They get 5 days in jail. Confidence: ${robber.robberyConfidence}` };
+          }
         }
       } else if (Math.random() < 0.05) { // 5% lethal force
         robber.alive = false;
         robber.status = "Killed by Police";
         robber.deathDay = state.day;
-        jackpotEvent = { title: "🔫 Lethal Force", message: `During an attempted robbery, ${robber.name} was shot and killed by Officer ${cop.name}!` };
+        
+        if (isSerialKiller) {
+          jackpotEvent = { title: "🔫 SERIAL KILLER KILLED!", message: `In a dramatic confrontation, Officer ${cop.name} shot and killed the serial killer ${robber.name}! The nightmare is over!` };
+        } else {
+          jackpotEvent = { title: "🔫 Lethal Force", message: `During an attempted robbery, ${robber.name} was shot and killed by Officer ${cop.name}!` };
+        }
       } else {
         robber.locationId = "jail-1";
-        robber.jailHoursRemaining = 72; // 3 days
+        robber.jailHoursRemaining = isSerialKiller ? 240 : 72; // Serial killers: 10 days vs 3 days
         robber.happiness = clamp(robber.happiness - 30, 0, 100);
-        jackpotEvent = { title: "🚓 Arrested!", message: `${robber.name} tried to rob ${victim.name} but was caught by Officer ${cop.name}! Sent to jail for 3 days. Confidence dropped to ${robber.robberyConfidence}.` };
+        
+        if (isSerialKiller) {
+          robber.isSerialKiller = false; // Lose serial killer status when caught
+          jackpotEvent = { title: "🔪 SERIAL KILLER ARRESTED!", message: `The serial killer ${robber.name} was finally caught by Officer ${cop.name}! Sentenced to 10 days. The town celebrates!` };
+        } else {
+          jackpotEvent = { title: "🚓 Arrested!", message: `${robber.name} tried to rob ${victim.name} but was caught by Officer ${cop.name}! Sent to jail for 3 days. Confidence dropped to ${robber.robberyConfidence}.` };
+        }
       }
     } else {
       // ROBBERY SUCCEEDS
@@ -425,12 +526,11 @@ function advanceHour(skipRender = false) {
 }
 
 function advanceDay() {
+  // Advance full 24 hours without breaking for events
   for (let i = 0; i < 24; i++) {
-    const hasEvent = advanceHour(true);
-    if (hasEvent) {
-      break; // Stop skipping if a major event occurs
-    }
+    advanceHour(true);
   }
+  // Force a full render to show all updates
   render();
 }
 
@@ -485,9 +585,10 @@ function checkPregnancies() {
     
     // Bonus chance for first 3 kids, reduced after that
     let adjustedChance = gameConfig.pregnancyChance;
-    if (existingChildren === 0) adjustedChance *= 1.5; // 67.5% for first child
-    else if (existingChildren === 1) adjustedChance *= 1.2; // 54% for second child
-    else if (existingChildren >= 3) adjustedChance *= 0.5; // 22.5% after 3 kids
+    if (existingChildren === 0) adjustedChance = 1.0; // 100% for first child - GUARANTEED!
+    else if (existingChildren === 1) adjustedChance = 1.0; // 100% for second child - GUARANTEED!
+    else if (existingChildren === 2) adjustedChance = 0.95; // 95% for third child
+    else if (existingChildren >= 3) adjustedChance *= 0.5; // 47.5% after 3 kids
     
     if (Math.random() < adjustedChance) {
       const homeId = personA.homeId;
@@ -524,9 +625,9 @@ function checkPregnancies() {
         const child = createChild(personA, personB, state);
         state.people.push(child);
         
-        // Bigger bonuses to encourage more kids!
-        const babyBonus = 150; // Increased from $100
-        const happinessBoost = 40; // Increased from 30
+        // HUGE bonuses to encourage more kids!
+        const babyBonus = 200; // Increased from $150
+        const happinessBoost = 50; // Increased from 40 - MASSIVE boost!
         
         state.people = state.people.map(p => {
           if (p.id === personA.id || p.id === personB.id) {
@@ -593,8 +694,8 @@ function checkPromotions() {
     const currentJob = jobs.find(j => j.name === person.job.title);
     if (!currentJob || !currentJob.nextPromotion) return; // Already at top level
     
-    // Promotion criteria: worked enough days, high happiness, good money management
-    const eligible = person.daysWorked >= currentJob.daysToPromote && person.happiness >= 70 && person.money >= 100;
+    // Promotion criteria: worked enough days and has some money
+    const eligible = person.daysWorked >= currentJob.daysToPromote && person.money >= 50; // Removed happiness requirement!
     
     if (eligible) {
       const newJob = jobs.find(j => j.name === currentJob.nextPromotion);
@@ -674,7 +775,7 @@ function processInteractions(force = false) {
         status: willArgue ? "Arguing" : "Talking",
         talkedToday: person.talkedToday + 1,
         energy: clamp(person.energy - 1, 0, 100),
-        happiness: clamp(person.happiness + (willArgue ? -10 : 12), 0, 100),
+        happiness: clamp(person.happiness + (willArgue ? -10 : 20), 0, 100), // Increased from 12 to 20 - conversations give BIG happiness boost!
         depressedHours: willArgue
           ? person.depressedHours + 1
           : Math.max(0, person.depressedHours - 3),
@@ -985,7 +1086,6 @@ function init() {
     }
   });
 
-  els.addOfficeBtn.addEventListener("click", () => addBuilding("office"));
   els.addSchoolBtn.addEventListener("click", () => addBuilding("school"));
   els.addChurchBtn.addEventListener("click", () => addBuilding("church"));
   els.addPersonBtn.addEventListener("click", () => {

@@ -1,5 +1,5 @@
 // People and character management
-import { names, genders, traits, skills, jobs, buildings } from './constants.js';
+import { names, genders, traits, skills, jobs, entryLevelJobs, buildings, gameConfig } from './constants.js';
 import { randomItem, clamp } from './utils.js';
 
 export function assignHomes(people) {
@@ -21,10 +21,18 @@ export function assignHomes(people) {
 
 export function assignJobs(people) {
   return people.map((person, index) => {
-    if (index >= 12) {
+    if (index >= 20) {
       return { ...person, job: null };
     }
-    const jobTemplate = jobs[index % jobs.length];
+    
+    let jobTitle;
+    if (index === 0 || index === 1) jobTitle = "Police Officer (Day)";
+    else if (index === 2 || index === 3) jobTitle = "Police Officer (Night)";
+    else jobTitle = entryLevelJobs[(index - 4) % entryLevelJobs.length];
+
+    const jobTemplate = jobs.find(j => j.name === jobTitle);
+    if (!jobTemplate) return { ...person, job: null };
+    
     return {
       ...person,
       job: {
@@ -36,8 +44,15 @@ export function assignJobs(people) {
 }
 
 export function createPeople(count) {
+  // Determine how many gambling addicts and career criminals
+  const numGamblingAddicts = Math.floor(count * gameConfig.gamblingAddictChance);
+  const numCareerCriminals = Math.floor(count / gameConfig.careerCriminalRatio);
+  
   const people = Array.from({ length: count }, (_, index) => {
     const age = 18 + Math.floor(Math.random() * 42);
+    const isGamblingAddict = index < numGamblingAddicts;
+    const isCareerCriminal = index >= numGamblingAddicts && index < (numGamblingAddicts + numCareerCriminals);
+    
     return {
       id: `person-${index + 1}`,
       name: names[index],
@@ -60,6 +75,12 @@ export function createPeople(count) {
       skill: randomItem(skills),
       homeId: null,
       job: null,
+      daysWorked: 0, // Track days worked for promotion
+      robberyConfidence: 0, // Track robbery confidence
+      gamblingAddiction: isGamblingAddict ? 20 : 0, // Gambling addicts start with max addiction
+      isCareerCriminal: isCareerCriminal, // Career criminals rob regardless of happiness
+      isSerialKiller: false, // Serial killer status
+      lastKillDay: 0, // Track when serial killer last killed
     };
   });
 
@@ -103,5 +124,6 @@ export function createChild(parentA, parentB, state) {
     isChild: true,
     parentAId: parentA.id,
     parentBId: parentB.id,
+    daysWorked: 0, // Track days worked for promotion
   };
 }
