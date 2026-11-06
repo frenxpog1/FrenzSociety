@@ -1,4 +1,15 @@
+node_modules/
+dist/
+qa-mobile.html
+*.zip
+.openai/*.local.*
 .DS_Store
 .vscode/
-node_modules/
 *.log
+
+qa-characters.html
+
+qa-resident-states.html
+
+qa-crime.html
+qa-live-crime.html

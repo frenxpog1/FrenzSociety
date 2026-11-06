@@ -9,9 +9,9 @@ export function assignHomes(people) {
 
   return people.map((person) => {
     const house = houses[houseIndex];
-    const updated = { ...person, homeId: house.id };
+    const updated = { ...person, homeId: house?.id ?? null };
     occupants += 1;
-    if (occupants >= house.capacity) {
+    if (house && occupants >= house.capacity) {
       houseIndex += 1;
       occupants = 0;
     }
@@ -86,7 +86,7 @@ export function createPeople(count) {
 
   return assignJobs(assignHomes(people)).map((person) => ({
     ...person,
-    locationId: person.homeId,
+    locationId: person.homeId ?? "town-square",
   }));
 }
 
@@ -116,10 +116,10 @@ export function createChild(parentA, parentB, state) {
     partnerId: null,
     alive: true,
     status: "Child at home",
-    locationId: parentA.homeId,
+    locationId: parentA.homeId ?? parentB.homeId ?? "town-square",
     trait: randomItem(traits),
     skill: randomItem(skills),
-    homeId: parentA.homeId,
+    homeId: parentA.homeId ?? parentB.homeId,
     job: null,
     isChild: true,
     parentAId: parentA.id,

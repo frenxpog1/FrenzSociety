@@ -1,3 +1,15 @@
+import { recruitForOffices } from './employment.js';
+import { encounterFor, stageRobbery, skipCrimeScenes } from './crime.js';
+import { renderCommunityGoals } from "./goals.js";
+import { saveLocal, readLocal, createSnapshot, decodeSnapshot, applySnapshot } from './persistence.js';
+import { focusBuilding, resetCamera, followResident, stopFollowing, startConstruction, cancelConstruction, findConstructionLot } from './world.js';
+import { findBuildablePosition } from './layout.js';
+import { canBuild, buildCatalog } from './construction.js';
+import { renderBuildingInspector, renderBuildingDirectory } from './inspector.js';
+import { advanceActivities } from './activities.js';
+import { hasArrived } from './movement.js';
+import { settleFinances, distributeTreasury } from './economy.js';
+import { initUI, openPanel } from './ui.js';
 // Main application entry point
 import { gameConfig, buildings, jobs, names, genders, traits, skills, entryLevelJobs } from './constants.js';
 import { formatHour, clamp, randomItem } from './utils.js';
@@ -9,8 +21,36 @@ import { shouldArgue, updateRelationship, chooseConversationTopic, conversationL
 import { renderStats, renderMap, renderPeopleList, renderDetails, renderConversations, renderLog, buildRelationshipRow } from './render.js';
 import { animatePeople } from './animation.js';
 
-// Initialize DOM elements
+// Pristine templates allow a true restart after upgrades and expansion.
+const initialBuildings = structuredClone(buildings);
+const initialJobs = structuredClone(jobs);
+let resumeTimer = null;
+let resumeAfterEvents = false;
 let els;
+let storage;
+try { storage=globalThis.localStorage; } catch {}
+function notify(message){state.notice={text:message,until:performance.now()+5000};}
+function updateSaveStatus(message){const el=document.querySelector('#saveStatus');if(el)el.textContent=message;}
+function persistTown(manual=false){
+  if(state.saveBlocked&&!manual)return;
+  const result=saveLocal(state,buildings,jobs,storage);
+  if(result.ok){state.saveBlocked=false;updateSaveStatus(`Saved ${new Date(result.savedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`);if(manual)notify('Town saved on this device.');}
+  else {updateSaveStatus('Save unavailable');if(manual)notify(result.error);}
+}
+function syncControls(){
+  els.toggleRun.textContent=state.running?'Pause':'Resume';
+  els.speedSelect.value=String(state.speed);els.resumeDelaySelect.value=String(state.resumeDelay);
+  els.deathAge.value=String(state.deathAge);els.deathAgeLabel.textContent=`${state.deathAge} years`;els.populationSize.value=String(state.populationSize);
+  document.querySelector('#pauseForEvents').checked=state.pauseForEvents;
+  els.resumeDelaySelect.disabled=!state.pauseForEvents;
+}
+function restoreTown(snapshot,message){
+  clearTimeout(resumeTimer);resumeTimer=null;els.eventModal.hidden=true;els.friendModal.hidden=true;els.closeEventModal.disabled=false;
+  document.querySelector('#newTownConfirm').hidden=true;
+  cancelConstruction();state.inspectedBuildingId=null;
+  applySnapshot(snapshot,state,buildings,jobs);syncControls();scheduleTick();scheduleSocialTick();render();resetCamera();notify(message);
+}
+
 
 // Event logging
 function addLog(message) {
@@ -52,14 +92,35 @@ function visibleSpeechCount() {
 }
 
 // Simulation control
-function resetSimulation() {
-  state.hour = 6;
+function resetSimulation(options = {}) {
+  cancelConstruction();
+  state.inspectedBuildingId = null;
+  clearTimeout(resumeTimer);
+  resumeTimer = null;
+  buildings.splice(0, buildings.length, ...structuredClone(initialBuildings));
+  jobs.splice(0, jobs.length, ...structuredClone(initialJobs));
+  state.townTreasury = 0;
+  state.casinoBankroll = gameConfig.casinoStartingBalance;
+  state.deaths = 0;
+  state.modalQueue = [];
+  state.running = true;
+  els.eventModal.hidden = true;
+  els.friendModal.hidden = true;
+  els.closeEventModal.disabled = false;
+  els.toggleRun.textContent = "Pause";
+  state.followId=null;
+  state.recentEvents=[];
+  state.hour = 9;
+  state.activitySeconds = 0;
   state.day = 1;
   state.deathAge = Number(els.deathAge.value);
   state.populationSize = Number(els.populationSize.value);
-  state.people = createPeople(clamp(state.populationSize, 10, 15));
+  state.people = createPeople(clamp(state.populationSize || 15, 10, 30));
+  state.people = state.people.map(p => isWorkHour(p,state.hour) ? {...p, status:p.job.title.includes('Police')?'At Police Station':'Working',locationId:p.job.building} : p);
   state.relationships = {};
   state.motion = {};
+  state.crimeEncounters = [];
+  state.pendingCrimeDeaths = [];
   state.speech = {};
   state.recentTopics = {};
   state.nextConversationAt = performance.now() + 2500;
@@ -70,9 +131,15 @@ function resetSimulation() {
   addLog(`${state.people.length} humans moved into 10 houses.`);
   addLog(`The town opened 2 offices, 1 restaurant, and meals cost ${gameConfig.mealCost}.`);
   render();
+  resetCamera();
+  if(options.save!==false){document.querySelector('#closeDrawer').click();if(storage)persistTown(true);}
 }
 
-function advanceHour(skipRender = false) {
+function advanceHour(skipRender = false, skipRequested = false) {
+  const skipTravel=skipRequested||skipRender||!state.running;
+  if (skipTravel) for (const event of skipCrimeScenes(state)) triggerEvent(event.title,event.message);
+  const oldAlive = [...new Set([...state.people.filter(p => p.alive).map(p => p.id), ...(state.pendingCrimeDeaths || [])])];
+  state.pendingCrimeDeaths = [];
   state.hour += 1;
   if (state.hour >= 24) {
     state.hour = 0;
@@ -125,40 +192,14 @@ function advanceHour(skipRender = false) {
         addLog(`🎰 The Casino was refilled to $5000 (added $${refill}) for the new week!`);
       }
       if (state.townTreasury > 0) {
-        const alivePeople = state.people.filter(p => p.alive && !p.isChild);
-        if (alivePeople.length > 0) {
-          const redistributionAmount = Math.floor(state.townTreasury * 0.9); // 90% of treasury (was 50%)
-          const perPerson = Math.floor(redistributionAmount / alivePeople.length);
-          
-          // Calculate need-based distribution - poor people get more
-          const maxMoney = Math.max(...alivePeople.map(p => p.money), 1);
-          const needScores = alivePeople.map(person => ({
-            person,
-            needScore: maxMoney - person.money + 10 // Inverse - poorer = higher score
-          }));
-          const totalNeed = needScores.reduce((sum, item) => sum + item.needScore, 0);
-          
-          if (totalNeed > 0) {
-            state.people = state.people.map(person => {
-              if (person.alive && !person.isChild) {
-                const needItem = needScores.find(item => item.person.id === person.id);
-                if (needItem) {
-                  const share = Math.floor((needItem.needScore / totalNeed) * redistributionAmount);
-                  return { ...person, money: person.money + share };
-                }
-              }
-              return person;
-            });
-            
-            state.townTreasury -= redistributionAmount;
-            addLog(`💰 Weekly redistribution! $${redistributionAmount} distributed based on need (poor get more).`);
-            
-            triggerEvent("💰 Treasury Redistribution", `The town distributed $${redistributionAmount} (90% of treasury) based on need! Poor people received more!`);
-          }
+        const distributed = distributeTreasury(state);
+        if (distributed > 0) {
+          addLog(`Weekly redistribution: $${distributed} distributed based on need.`);
+          triggerEvent("Treasury Redistribution", `The town distributed $${distributed} to adult residents, with larger shares for those in need.`);
         }
       }
     }
-    
+
     // Police Force Management
     const aliveCount = state.people.filter(p => p.alive).length;
     const aliveAdults = state.people.filter(p => p.alive && !p.isChild);
@@ -167,7 +208,7 @@ function advanceHour(skipRender = false) {
     
     if (cops.length > requiredCops) {
       // Too many cops, fire the least happy one and give them a new job
-      const toFire = cops.sort((a, b) => a.happiness - b.happiness)[0];
+      const toFire = cops.filter(p=>!encounterFor(state,p.id)).sort((a, b) => a.happiness - b.happiness)[0];
       if (toFire) {
         // Give them a new entry-level job instead of leaving them unemployed
         const newJobTitle = entryLevelJobs.filter(j => !j.includes("Police"))[Math.floor(Math.random() * (entryLevelJobs.length - 1))];
@@ -184,7 +225,7 @@ function advanceHour(skipRender = false) {
       }
     } else if (cops.length < requiredCops) {
       // Need more cops, find an unemployed adult or random worker
-      const candidates = aliveAdults.filter(p => !p.job || (!p.job.title.includes("Police")));
+      const candidates = aliveAdults.filter(p => !encounterFor(state,p.id) && (!p.job || !p.job.title.includes("Police")));
       if (candidates.length > 0) {
         const unemployed = candidates.filter(p => !p.job);
         const toHire = unemployed.length > 0 ? unemployed[Math.floor(Math.random() * unemployed.length)] : candidates[Math.floor(Math.random() * candidates.length)];
@@ -200,8 +241,10 @@ function advanceHour(skipRender = false) {
       }
     }
     
+    for (const {person,building} of recruitForOffices(state,buildings,jobs)) addLog(`${person.name} found work at ${building.name}.`);
+
     // Help unemployed people find jobs
-    const unemployed = aliveAdults.filter(p => !p.job && !p.isChild);
+    const unemployed = aliveAdults.filter(p => !p.job && !p.jailHoursRemaining && !encounterFor(state,p.id));
     unemployed.forEach(person => {
       // Unemployed people actively look for work
       if (Math.random() < 0.3) { // 30% chance per day to find a job
@@ -228,22 +271,21 @@ function advanceHour(skipRender = false) {
     
     if (aliveAdultsCount >= gameConfig.serialKillerMinPop && !serialKiller && shouldSpawn) {
       // Spawn a serial killer from existing population
-      const candidates = aliveAdults.filter(p => !p.isSerialKiller && !p.isChild);
+      const candidates = aliveAdults.filter(p => !p.isSerialKiller && !p.isChild && !p.jailHoursRemaining && !encounterFor(state,p.id));
       if (candidates.length > 0) {
         const chosen = candidates[Math.floor(Math.random() * candidates.length)];
         chosen.isSerialKiller = true;
         chosen.lastKillDay = state.day;
-        state.serialKillerEverSpawned = true; // Mark that serial killer has spawned
-        
         const spawnType = state.serialKillerEverSpawned ? "returned" : "emerged";
+        state.serialKillerEverSpawned = true;
         addLog(`🔪 A serial killer has ${spawnType} in the town... ${chosen.name} has dark secrets.`);
         triggerEvent("🔪 SERIAL KILLER EMERGES!", `⚠️ WARNING ⚠️\n\nA serial killer is now among us!\n\n${chosen.name} has begun their reign of terror. They will kill every 3 days. The town is in danger!`);
       }
     }
     
     // Serial killer kills every 3 days
-    if (serialKiller && state.day - serialKiller.lastKillDay >= gameConfig.serialKillerKillInterval) {
-      const victims = state.people.filter(p => p.alive && p.id !== serialKiller.id && !p.isChild);
+    if (serialKiller && !encounterFor(state,serialKiller.id) && !serialKiller.jailHoursRemaining && state.day - serialKiller.lastKillDay >= gameConfig.serialKillerKillInterval) {
+      const victims = state.people.filter(p => p.alive && p.id !== serialKiller.id && !p.isChild && !p.jailHoursRemaining && !encounterFor(state,p.id));
       if (victims.length > 0) {
         const victim = victims[Math.floor(Math.random() * victims.length)];
         victim.alive = false;
@@ -303,7 +345,7 @@ function advanceHour(skipRender = false) {
     // Check if anyone needs and can afford a new house
     state.people.forEach(person => {
       // If adult and they have more than 250 money, they might buy a house
-      if (!person.isChild && person.money >= 250) {
+      if (person.alive && !person.isChild && person.money >= 250) {
         // Find if they share a house with an ex, or just want to move out from parents
         const home = buildings.find(b => b.id === person.homeId);
         const occupants = state.people.filter(p => p.alive && p.homeId === person.homeId);
@@ -322,163 +364,33 @@ function advanceHour(skipRender = false) {
     });
   }
 
-  const oldAlive = state.people.filter(p => p.alive).map(p => p.id);
   
   let jackpotEvent = null;
-  let robberyEvents = [];
-  state.people = state.people.map((person) => {
-    const updated = updatePerson(person, state, addLog);
+  const tryRobbery = skipTravel ? undefined : (robber, victim) => {
+    if (!stageRobbery(state, robber, victim, buildings)) return false;
+    addLog(`${robber.name} is approaching ${victim.name} for a robbery.`);
+    return true;
+  };
+  // Resolve one decision at a time so encounters reserve both participants.
+  for (let i = 0; i < state.people.length; i++) {
+    const person = state.people[i];
+    if (encounterFor(state, person.id)) continue;
+    const updated = updatePerson(person, state, addLog, { tryRobbery });
     if (updated.modalEvent) {
       jackpotEvent = updated.modalEvent;
       delete updated.modalEvent;
     }
-    // Collect treasury contributions
-    if (updated.treasuryContribution) {
-      state.townTreasury += updated.treasuryContribution;
-      delete updated.treasuryContribution;
-    }
-    // Casino balance updates
-    if (updated.casinoPayout) {
-      // Check if casino can afford to pay
-      if (state.casinoBankroll >= updated.casinoPayout) {
-        state.casinoBankroll -= updated.casinoPayout;
-        console.log(`Casino paid out ${updated.casinoPayout}, new balance: ${state.casinoBankroll}`);
-      } else {
-        // Casino can only pay what it has
-        const actualPayout = Math.max(0, state.casinoBankroll);
-        state.casinoBankroll = 0;
-        console.log(`Casino broke! Could only pay ${actualPayout} of ${updated.casinoPayout}`);
-        addLog(`🎰💸 CASINO BROKE! Could only pay ${actualPayout} of ${updated.casinoPayout}. Balance: $0`);
-      }
-      delete updated.casinoPayout;
-    }
-    if (updated.casinoContribution) {
-      state.casinoBankroll += updated.casinoContribution;
-      console.log(`Casino received ${updated.casinoContribution}, new balance: ${state.casinoBankroll}`);
-      delete updated.casinoContribution;
-    }
-    if (updated.robbingVictimId) {
-      robberyEvents.push({ robberId: updated.id, victimId: updated.robbingVictimId });
-      delete updated.robbingVictimId;
-    }
-    return updated;
-  });
-  
-  for (const { robberId, victimId } of robberyEvents) {
-    let robber = state.people.find(p => p.id === robberId);
-    let victim = state.people.find(p => p.id === victimId);
-    if (!robber || !victim || !robber.alive || !victim.alive || victim.status === "In Jail") continue;
-    
-    // Initialize robbery confidence if not set
-    if (robber.robberyConfidence === undefined) robber.robberyConfidence = 0;
-    
-    // Check if cops on patrol
-    const activeCops = state.people.filter(p => p.alive && p.job?.title.includes("Police") && isWorkHour(p, state.hour));
-    
-    // Serial killers are MUCH harder to catch - they're professionals
-    const isSerialKiller = robber.isSerialKiller || false;
-    
-    // Confidence affects success rate - higher confidence = better at avoiding cops
-    const baseDetectionRate = activeCops.length > 0 ? (isSerialKiller ? 0.15 : 0.7) : 0; // Serial killers: 15% base vs 70% normal
-    const confidenceBonus = Math.min(robber.robberyConfidence * 0.05, isSerialKiller ? 0.8 : 0.4); // Serial killers get up to 80% bonus
-    const actualDetectionRate = Math.max(baseDetectionRate - confidenceBonus, isSerialKiller ? 0.02 : 0.2); // Serial killers: min 2% vs 20% normal
-    
-    if (activeCops.length > 0 && Math.random() < actualDetectionRate) {
-      // CAUGHT BY POLICE
-      const cop = activeCops[Math.floor(Math.random() * activeCops.length)];
-      
-      // Serial killers are EXTREMELY dangerous when cornered
-      const fightBackChance = isSerialKiller ? 0.8 : 0.1; // 80% for serial killers vs 10% normal
-      const lethalChance = isSerialKiller ? 0.9 : 0.4; // 90% lethal for serial killers vs 40% normal
-      
-      // Reset confidence on getting caught (serial killers lose less)
-      robber.robberyConfidence = Math.max(0, robber.robberyConfidence - (isSerialKiller ? 1 : 3));
-      
-      if (Math.random() < fightBackChance) { // Serial killers almost always fight back
-        if (Math.random() < lethalChance) { // Serial killers are deadly
-          cop.alive = false;
-          cop.status = "Killed in the line of duty";
-          cop.deathDay = state.day;
-          const stolen = Math.floor(victim.money * 0.5);
-          victim.money -= stolen;
-          robber.money += stolen;
-          robber.happiness = clamp(robber.happiness + 20, 0, 100);
-          
-          if (isSerialKiller) {
-            robber.robberyConfidence = Math.min(robber.robberyConfidence + 3, 20); // Serial killer gains confidence from killing cop
-            jackpotEvent = { title: "🔪🚓 COP MURDERED!", message: `The serial killer ${robber.name} was cornered by Officer ${cop.name}... and KILLED THE COP! They escaped with the money. The town is terrified!` };
-          } else {
-            jackpotEvent = { title: "🚓 Officer Down!", message: `Tragedy strikes! Officer ${cop.name} was shot and killed while trying to stop ${robber.name} from robbing ${victim.name}!` };
-          }
-        } else {
-          robber.locationId = "jail-1";
-          robber.jailHoursRemaining = isSerialKiller ? 240 : 120; // Serial killers get 10 days vs 5 days
-          robber.happiness = clamp(robber.happiness - 40, 0, 100);
-          
-          if (isSerialKiller) {
-            robber.isSerialKiller = false; // Lose serial killer status when caught
-            jackpotEvent = { title: "🔪 SERIAL KILLER CAUGHT!", message: `After a violent shootout, Officer ${cop.name} managed to capture the serial killer ${robber.name}! They're sentenced to 10 days in jail. The town can finally breathe...` };
-          } else {
-            jackpotEvent = { title: "🔫 Shootout!", message: `Officer ${cop.name} was injured in a violent shootout, but managed to arrest ${robber.name}! They get 5 days in jail. Confidence: ${robber.robberyConfidence}` };
-          }
-        }
-      } else if (Math.random() < 0.05) { // 5% lethal force
-        robber.alive = false;
-        robber.status = "Killed by Police";
-        robber.deathDay = state.day;
-        
-        if (isSerialKiller) {
-          jackpotEvent = { title: "🔫 SERIAL KILLER KILLED!", message: `In a dramatic confrontation, Officer ${cop.name} shot and killed the serial killer ${robber.name}! The nightmare is over!` };
-        } else {
-          jackpotEvent = { title: "🔫 Lethal Force", message: `During an attempted robbery, ${robber.name} was shot and killed by Officer ${cop.name}!` };
-        }
-      } else {
-        robber.locationId = "jail-1";
-        robber.jailHoursRemaining = isSerialKiller ? 240 : 72; // Serial killers: 10 days vs 3 days
-        robber.happiness = clamp(robber.happiness - 30, 0, 100);
-        
-        if (isSerialKiller) {
-          robber.isSerialKiller = false; // Lose serial killer status when caught
-          jackpotEvent = { title: "🔪 SERIAL KILLER ARRESTED!", message: `The serial killer ${robber.name} was finally caught by Officer ${cop.name}! Sentenced to 10 days. The town celebrates!` };
-        } else {
-          jackpotEvent = { title: "🚓 Arrested!", message: `${robber.name} tried to rob ${victim.name} but was caught by Officer ${cop.name}! Sent to jail for 3 days. Confidence dropped to ${robber.robberyConfidence}.` };
-        }
-      }
-    } else {
-      // ROBBERY SUCCEEDS
-      const stolenAmount = Math.floor(Math.random() * (gameConfig.robberyMaxSteal - gameConfig.robberyMinSteal + 1)) + gameConfig.robberyMinSteal;
-      const actualStolen = Math.min(stolenAmount, victim.money);
-      
-      victim.money -= actualStolen;
-      robber.money += actualStolen;
-      victim.happiness = clamp(victim.happiness - 25, 0, 100);
-      robber.happiness = clamp(robber.happiness + 30, 0, 100); // Big happiness boost from success
-      robber.depressedHours = 0; // Reset depression
-      
-      // Increase confidence on successful robbery
-      robber.robberyConfidence = Math.min(robber.robberyConfidence + 2, 20); // Max confidence 20
-      
-      addLog(`💰 ${robber.name} successfully robbed ${victim.name} and stole $${actualStolen}! Confidence increased to ${robber.robberyConfidence}.`);
-      
-      if (Math.random() < 0.05) { // 5% chance of violence
-        victim.alive = false;
-        victim.status = "Murdered during robbery";
-        victim.deathDay = state.day;
-        robber.robberyConfidence += 1; // Extra confidence from getting away with murder
-        jackpotEvent = { title: "🔪 Murder!", message: `${robber.name} robbed and KILLED ${victim.name}! The town is in shock! Confidence: ${robber.robberyConfidence}` };
-      } else {
-        jackpotEvent = { title: "💰 Robbery Success!", message: `${robber.name} successfully robbed ${victim.name} of $${actualStolen}! Their confidence is growing (${robber.robberyConfidence}).` };
-      }
-      
-      if (Math.random() < gameConfig.victimReportChance && activeCops.length > 0) {
-        addLog(`📞 ${victim.name} reported the robbery to police.`);
-      }
-    }
-    
-    // Update the robber in state
-    state.people = state.people.map(p => p.id === robber.id ? robber : p);
+    state.people[i] = settleFinances(updated, state);
   }
-  
+
+  for (const child of state.people) {
+    if (child.mealPaidBy) {
+      const parent = getPerson(state.people, child.mealPaidBy);
+      if (parent) parent.money = Math.max(0, parent.money - gameConfig.mealCost);
+      delete child.mealPaidBy;
+    }
+  }
+
   const newAlive = state.people.filter(p => p.alive).map(p => p.id);
   const justDiedIds = oldAlive.filter(id => !newAlive.includes(id));
 
@@ -514,6 +426,18 @@ function advanceHour(skipRender = false) {
     }
   }
 
+  const aliveIds = new Set(state.people.filter(p => p.alive).map(p => p.id));
+  for (const person of state.people) {
+    if (person.partnerId && !aliveIds.has(person.partnerId)) person.partnerId = null;
+  }
+  for (const [key, relation] of Object.entries(state.relationships)) {
+    if (key.split('|').some(id => !aliveIds.has(id))) relation.couple = false;
+  }
+  if (skipTravel) {
+    // Explicit time skips include the service clock and abstract the skipped travel.
+    advanceActivities(state, 6, new Set(state.people.filter(p=>p.alive).map(p=>p.id)), true);
+    state.motion={};
+  }
   const interactionEvent = processInteractions(skipRender);
   const hasEvent = interactionEvent || funeralHappened || !!jackpotEvent;
   
@@ -535,6 +459,12 @@ function advanceDay() {
 }
 
 function triggerEvent(title, message) {
+  const stamp=`Day ${state.day}, ${formatHour(state.hour)}`;
+  state.recentEvents=[{title,message,stamp},...(state.recentEvents||[])].slice(0,12);
+  addLog(`${title}: ${message}`);
+  if(!state.pauseForEvents){notify(title);return;}
+
+  if (els.eventModal.hidden) resumeAfterEvents = state.running;
   // Add to queue instead of showing immediately
   state.modalQueue.push({ title, message });
   
@@ -556,7 +486,7 @@ function showNextModal() {
   state.modalUserClicked = false; // Reset the flag for new modal
   els.toggleRun.textContent = "Resume";
   els.eventModalTitle.textContent = modal.title;
-  els.eventModalBody.innerHTML = `<p>${modal.message}</p>`;
+  els.eventModalBody.textContent = modal.message;
   
   // Show queue count if there are more modals
   if (state.modalQueue.length > 0) {
@@ -661,6 +591,7 @@ function removeDead() {
   
   // Remove dead people from the list
   if (toRemove.length > 0) {
+    state.deaths = (state.deaths || 0) + toRemove.length;
     state.people = state.people.filter(person => !toRemove.includes(person.id));
     
     // Clean up relationships involving removed people
@@ -688,7 +619,7 @@ function removeDead() {
 
 function checkPromotions() {
   state.people.forEach((person) => {
-    if (!person.alive || person.isChild || !person.job) return;
+    if (!person.alive || person.isChild || !person.job || encounterFor(state,person.id)) return;
     
     // Check if eligible for promotion
     const currentJob = jobs.find(j => j.name === person.job.title);
@@ -723,6 +654,12 @@ function processInteractions(force = false) {
   const canTalk = state.people.filter(
     (person) =>
       person.alive &&
+      !person.jailHoursRemaining &&
+      !encounterFor(state, person.id) &&
+      person.status !== 'On Patrol' &&
+      (force || hasArrived(state,person)) &&
+      !person.mealOrder &&
+      !/work/i.test(person.status) &&
       socialPlaces.includes(person.locationId) &&
       ![
         "Sleeping",
@@ -795,15 +732,50 @@ function processInteractions(force = false) {
 // Rendering
 function render() {
   renderStats(state, els);
-  renderMap(state, els, selectPerson);
+  renderCommunityGoals(state, buildings, {
+    residents: () => openPanel('residents'),
+    cafe: () => { document.querySelector('#closeDrawer').click(); focusBuilding('restaurant'); },
+    square: () => { document.querySelector('#closeDrawer').click(); focusBuilding('town-square'); },
+  });
+  renderMap(state, els, selectPerson, { inspect: inspectBuilding, build: confirmConstruction, refreshInspector: () => renderBuildingInspector(state, selectPerson) });
+  renderBuildingDirectory();
+  renderBuildingInspector(state, selectPerson);
   renderPeopleList(state, els, selectPerson);
   renderDetails(state, els, openFriendModal);
   renderConversations(state, els);
   renderLog(state, els);
 }
 
+function inspectBuilding(id) {
+  if (!buildings.some(b => b.id === id)) return;
+  state.inspectedBuildingId = id;
+  renderBuildingInspector(state, selectPerson);
+  openPanel('building');
+}
+
+function confirmConstruction() {
+  const mode = state.buildMode;
+  if (!mode) return;
+  const added = addBuilding(mode.type, mode);
+  if (!added) return;
+  cancelConstruction();
+  focusBuilding(added.id);
+  inspectBuilding(added.id);
+  persistTown();
+}
+
 function selectPerson(id) {
+  const person = getPerson(state.people,id);
+  if (!person) return;
+  cancelConstruction();
   state.selectedId = id;
+  if (person.alive) {
+    document.querySelector('#closeDrawer').click();
+    followResident(id);
+  } else {
+    stopFollowing();
+    openPanel('person');
+  }
   render();
 }
 
@@ -846,7 +818,7 @@ function scheduleTick() {
   if (state.tickTimer) {
     window.clearInterval(state.tickTimer);
   }
-  const minute = 60_000;
+  const minute = 15_000;
   const delay = minute / state.speed;
   state.tickTimer = window.setInterval(() => {
     if (state.running) {
@@ -868,108 +840,33 @@ function scheduleSocialTick() {
   }, delay);
 }
 
-// Predefined slots for new buildings to ensure the town looks good
-const predefinedSlots = {
-  office: [
-    { x: 22, y: 29 },
-    { x: 78, y: 29 },
-    { x: 22, y: 72 },
-    { x: 78, y: 72 },
-  ],
-  school: [
-    { x: 50, y: 12 }, // Perfect top-middle spot (fills gap between House 3 and 4)
-    { x: 50, y: 88 }, // Bottom-middle spot
-  ],
-  church: [
-    { x: 50, y: 90 }, // Bottom-middle spot
-  ],
-  home: [
-    { x: 36, y: 29 }, // Between Office 3 and Town Square
-    { x: 64, y: 29 }, // Between Office 4 and Town Square
-    { x: 36, y: 50 }, // On horizontal road, between Office A and intersection
-    { x: 64, y: 50 }, // On horizontal road, between Office B and intersection
-    { x: 36, y: 72 }, // Between Office 5 and Restaurant
-    { x: 64, y: 72 }, // Between Office 6 and Restaurant
-    { x: 8, y: 32 },  // Far left middle-top
-    { x: 92, y: 32 }, // Far right middle-top
-    { x: 8, y: 68 },  // Far left middle-bottom
-    { x: 92, y: 68 }, // Far right middle-bottom
-  ]
-};
-
-function getPredefinedPos(type) {
-  const slots = predefinedSlots[type] || [];
-  for (const slot of slots) {
-    // Check if slot is already taken by any building
-    const isTaken = buildings.some(b => Math.abs(b.x - slot.x) < 5 && Math.abs(b.y - slot.y) < 5);
-    if (!isTaken) return slot;
+function addBuilding(type, chosenPosition) {
+  const position = chosenPosition ?? findBuildablePosition(type,buildings);
+  if(!canBuild(type,position,buildings)){
+    const message=chosenPosition ? 'This lot is blocked. Choose a clear lot before building.' : 'No suitable lot is available. This building needs more space.';
+    addLog(message);state.notice={text:message,until:performance.now()+5000};render();return null;
   }
-  // Fallback to random if all predefined slots are taken
-  for (let i = 0; i < 50; i++) {
-    const x = 10 + Math.floor(Math.random() * 80);
-    const y = 10 + Math.floor(Math.random() * 80);
-    const overlap = buildings.some(b => Math.abs(b.x - x) < 12 && Math.abs(b.y - y) < 12);
-    if (!overlap) return { x, y };
+  const count=buildings.filter(b=>b.type===type).length+1;
+  const names={home:`House ${count}`,office:`Office ${count}`,school:`School ${count}`,church:`Church ${count}`};
+  const added={id:`${type==='home'?'house':type}-${crypto.randomUUID()}`,type,name:names[type],x:position.x,y:position.y};
+  if(type==='home')Object.assign(added,{beds:1,capacity:2});
+  if(type==='office'){
+    added.jobs=4;jobs.push({name:`Clerk ${count}`,building:added.id,starts:9,ends:17,wage:16});
   }
-  return { x: 10 + Math.floor(Math.random() * 80), y: 10 + Math.floor(Math.random() * 80) };
-}
-
-function addBuilding(type) {
-  const { x, y } = getPredefinedPos(type);
-  let addedBuilding = null;
-  
-  if (type === "home") {
-    const count = buildings.filter(b => b.type === "home").length + 1;
-    addedBuilding = {
-      id: `house-${count + Date.now()}`,
-      type: "home",
-      name: `House ${count}`,
-      beds: 1,
-      capacity: 2,
-      x, y
-    };
-    buildings.push(addedBuilding);
-    addLog(`A new house was built!`);
-  } else if (type === "office") {
-    const count = buildings.filter(b => b.type === "office").length + 1;
-    const officeId = `office-${count + Date.now()}`;
-    buildings.push({
-      id: officeId,
-      type: "office",
-      name: `Office ${count}`,
-      jobs: 4,
-      x, y
-    });
-    jobs.push(
-      { name: `Clerk ${count}`, building: officeId, starts: 9, ends: 17, wage: 16 }
-    );
-    addLog(`A new office was opened! New jobs available.`);
-  } else if (type === "school") {
-    buildings.push({
-      id: `school-${Date.now()}`,
-      type: "school",
-      name: `Town School`,
-      x, y
-    });
-    addLog(`A new school was built! Kids can learn now.`);
-  } else if (type === "church") {
-    buildings.push({
-      id: `church-${Date.now()}`,
-      type: "church",
-      name: `Town Church`,
-      x, y
-    });
-    addLog(`A church was built for the community.`);
-  }
-  render();
-  return addedBuilding;
+  buildings.push(added);
+  const hired = type === 'office' ? recruitForOffices(state,[added],jobs) : [];
+  for (const {person} of hired) addLog(`${person.name} found work at ${added.name}.`);
+  const hiring = hired.length ? ` Hired ${hired.length} resident${hired.length === 1 ? '' : 's'}.` : '';
+  addLog(`${added.name} opened on a new lot.${hiring}`);
+  state.notice = {text:`${added.name} added to the neighborhood.${hiring}`,until:performance.now()+4000};
+  render();return added;
 }
 
 export function buyHouse(person) {
   if (person.money >= 200) {
-    person.money -= 200;
     const house = addBuilding("home");
     if (house) {
+      person.money -= 200;
       person.homeId = house.id;
       person.locationId = house.id;
       addLog(`${person.name} paid $200 to build and move into their own home!`);
@@ -981,75 +878,68 @@ export function buyHouse(person) {
 function init() {
   // Initialize DOM elements
   els = initializeElements();
+  initUI(state);
   
   // Event listeners
+  document.querySelector('#inspectFollowed').addEventListener('click',()=>{
+    const person=getPerson(state.people,state.followId);
+    if(!person)return;
+    state.selectedId=person.id;render();openPanel('person');
+  });
   els.toggleRun.addEventListener("click", () => {
+    if (!els.eventModal.hidden) return;
     state.running = !state.running;
     els.toggleRun.textContent = state.running ? "Pause" : "Resume";
   });
 
-  els.stepHour.addEventListener("click", () => advanceHour());
-  els.stepDay.addEventListener("click", advanceDay);
-  els.restart.addEventListener("click", resetSimulation);
+  els.stepHour.addEventListener("click", () => { if (els.eventModal.hidden) advanceHour(false,true); });
+  els.stepDay.addEventListener("click", () => { if (els.eventModal.hidden) advanceDay(); });
+  els.restart.addEventListener("click",()=>{document.querySelector('#newTownConfirm').hidden=false;});
+  document.querySelector('#cancelNewTown').addEventListener('click',()=>{document.querySelector('#newTownConfirm').hidden=true;});
+  document.querySelector('#confirmNewTown').addEventListener('click',()=>{document.querySelector('#newTownConfirm').hidden=true;resetSimulation();});
+  document.querySelector('#pauseForEvents').addEventListener('change',e=>{state.pauseForEvents=e.currentTarget.checked;els.resumeDelaySelect.disabled=!state.pauseForEvents;});
+  document.querySelector('#saveNow').addEventListener('click',()=>persistTown(true));
+  document.querySelector('#downloadSave').addEventListener('click',()=>{
+    const file=new Blob([JSON.stringify(createSnapshot(state,buildings,jobs),null,2)],{type:'application/json'}),url=URL.createObjectURL(file);
+    const link=document.createElement('a');link.href=url;link.download=`Willow-Creek-Day-${state.day}.json`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    notify('Town save downloaded. Use Load save to restore it.');
+  });
+  const upload=document.querySelector('#saveFile');
+  document.querySelector('#loadSave').addEventListener('click',()=>upload.click());
+  upload.addEventListener('change',async()=>{
+    const file=upload.files?.[0];if(!file)return;
+    try{
+      if(file.size>2_000_000)throw new Error('Choose a save smaller than 2 MB.');
+      const decoded=decodeSnapshot(await file.text());
+      // Preserve the current town only after the incoming file has validated.
+      if(storage)persistTown();
+      restoreTown(decoded,'Town loaded. Time is paused.');persistTown();
+    }catch(error){notify(error.message);}
+    finally{upload.value='';}
+  });
+  document.querySelector('#restoreBackup').addEventListener('click',()=>{
+    const result=readLocal(storage,true);
+    if(!result.ok){notify(result.empty?'No backup is available yet.':result.error);return;}
+    restoreTown(result.snapshot,'Previous town restored. Time is paused.');persistTown();
+  });
 
   els.closeEventModal.addEventListener("click", () => {
-    console.log('Continue button clicked!', 'Queue length:', state.modalQueue.length, 'Disabled:', els.closeEventModal.disabled);
-    
-    // Prevent multiple clicks during countdown
-    if (els.closeEventModal.disabled) {
-      console.log('Button is disabled, ignoring click');
+    if (els.closeEventModal.disabled) return;
+    if (state.modalQueue.length) {
+      showNextModal();
       return;
     }
-    
-    // Mark that user clicked
-    state.modalUserClicked = true;
-    console.log('User clicked flag set to true');
-    
-    // Check if there are more modals in queue
-    if (state.modalQueue.length > 0) {
-      console.log('More modals in queue, showing next one');
-      // More modals waiting, show next one immediately
+    const finish = () => {
+      resumeTimer = null;
       els.eventModal.hidden = true;
-      showNextModal();
-    } else {
-      console.log('Last modal, handling resume delay. Delay setting:', state.resumeDelay);
-      // This was the last modal, now handle resume delay
-      if (state.resumeDelay === 'never') {
-        // Manual mode - just close modal and stay paused
-        console.log('Manual mode - closing modal');
-        els.eventModal.hidden = true;
-        return;
-      }
-      
-      const delayMs = state.resumeDelay * 1000;
-      if (delayMs > 0) {
-        console.log('Adding countdown to modal, delay:', delayMs, 'ms');
-        // Add countdown to the CURRENT modal (don't close it yet)
-        const currentBody = els.eventModalBody.innerHTML;
-        
-        // Add countdown text to current modal
-        els.eventModalBody.innerHTML = currentBody + `<p style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--muted);">⏳ Resuming in ${state.resumeDelay} seconds...</p>`;
-        
-        // Disable the continue button during countdown
-        els.closeEventModal.disabled = true;
-        els.closeEventModal.style.opacity = '0.5';
-        
-        setTimeout(() => {
-          console.log('Countdown finished, resuming simulation');
-          els.eventModal.hidden = true;
-          els.closeEventModal.disabled = false;
-          els.closeEventModal.style.opacity = '1';
-          state.running = true;
-          els.toggleRun.textContent = "Pause";
-        }, delayMs);
-      } else {
-        console.log('Instant resume - closing modal immediately');
-        // Resume immediately
-        els.eventModal.hidden = true;
-        state.running = true;
-        els.toggleRun.textContent = "Pause";
-      }
-    }
+      els.closeEventModal.disabled = false;
+      state.running = resumeAfterEvents && state.resumeDelay !== 'never';
+      els.toggleRun.textContent = state.running ? "Pause" : "Resume";
+    };
+    if (resumeAfterEvents && Number(state.resumeDelay) > 0) {
+      els.closeEventModal.disabled = true;
+      resumeTimer = setTimeout(finish, Number(state.resumeDelay) * 1000);
+    } else finish();
   });
 
   els.speedSelect.addEventListener("change", () => {
@@ -1069,7 +959,7 @@ function init() {
   });
 
   els.populationSize.addEventListener("change", () => {
-    els.populationSize.value = clamp(Number(els.populationSize.value) || 12, 10, 15);
+    els.populationSize.value = clamp(Number(els.populationSize.value) || 15, 10, 30);
   });
 
   els.closeFriendModal.addEventListener("click", closeFriendModal);
@@ -1086,8 +976,21 @@ function init() {
     }
   });
 
-  els.addSchoolBtn.addEventListener("click", () => addBuilding("school"));
-  els.addChurchBtn.addEventListener("click", () => addBuilding("church"));
+  for (const type of Object.keys(buildCatalog)) {
+    const id = { home: 'addHomeBtn', office: 'addOfficeBtn', school: 'addSchoolBtn', church: 'addChurchBtn' }[type];
+    document.querySelector(`#${id}`).addEventListener('click', () => {
+      if (startConstruction(type)) document.querySelector('#closeDrawer').click();
+      else notify('No suitable lot is available for this building.');
+    });
+  }
+  document.querySelector('#confirmConstruction').addEventListener('click', confirmConstruction);
+  document.querySelector('#cancelConstruction').addEventListener('click', cancelConstruction);
+  document.querySelector('#suggestConstruction').addEventListener('click', findConstructionLot);
+  document.querySelector('#buildingSelect').addEventListener('change', e => {
+    const id = e.target.value;
+    if (!id) return;
+    cancelConstruction();focusBuilding(id);inspectBuilding(id);e.target.value='';
+  });
   els.addPersonBtn.addEventListener("click", () => {
     // Create a new immigrant with random name
     const usedNames = state.people.filter(p => p.alive).map(p => p.name);
@@ -1114,7 +1017,7 @@ function init() {
     }
     
     const newPerson = {
-      id: `person-${Date.now()}`,
+      id: `person-${crypto.randomUUID()}`,
       name: randomName,
       ageDays: age * 365,
       hunger: 35 + Math.floor(Math.random() * 25),
@@ -1144,14 +1047,30 @@ function init() {
     state.people.push(newPerson);
     addLog(`👋 ${newPerson.name} arrived in town from another place!`);
     triggerEvent("👋 New Arrival!", `${newPerson.name} (${gender}, age ${age}) has arrived in town as a ${jobTemplate ? jobTemplate.name : 'job seeker'} with $${startingMoney}!`);
-    renderAll();
+    render();
   });
 
-  // Start simulation
-  resetSimulation();
-  scheduleTick();
-  scheduleSocialTick();
-  animatePeople(state, els);
+  // Resume safely: loading never advances the clock until the player presses Resume.
+  const saved=readLocal(storage);
+  if(saved.ok)restoreTown(saved.snapshot,`Restored Day ${saved.snapshot.state.day}. Press Resume when ready.`);
+  else {
+    const backup=saved.error?readLocal(storage,true):{ok:false};
+    if(backup.ok)restoreTown(backup.snapshot,'Recovered the previous backup. Time is paused.');
+    else {resetSimulation({save:false});if(saved.error){state.saveBlocked=true;notify('Your stored save could not be read. It has been left untouched.');}}
+  }
+  if(saved.ok)updateSaveStatus('Restored saved town');
+  else if(state.saveBlocked)updateSaveStatus('Save needs attention');
+  else updateSaveStatus(storage?'Autosave ready':'Local save unavailable');
+  syncControls();scheduleTick();scheduleSocialTick();
+  window.setInterval(()=>persistTown(),10000);
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')persistTown();});
+  window.addEventListener?.('pagehide',()=>persistTown());
+  animatePeople(state,els,performance.now(), event => {
+    triggerEvent(event.title,event.message);
+    render();
+  });
+  document.body?.removeAttribute('data-loading');
+  document.body?.setAttribute('aria-busy','false');
 }
 
 // Start when DOM is ready

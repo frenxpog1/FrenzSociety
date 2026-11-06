@@ -1,3 +1,8 @@
+import { drawPortrait } from "./characters.js";
+import { followResident, locateResident } from './world.js';
+import { personTargets } from './spaces.js';
+import { residentActivity } from './activities.js';
+import { mountWorld } from './world.js';
 // Rendering and UI updates
 import { buildings, gameConfig, jobs } from './constants.js';
 import { formatHour, clamp } from './utils.js';
@@ -18,6 +23,8 @@ export function renderStats(state, els) {
     ? Math.round(alive.reduce((total, person) => total + person.happiness, 0) / alive.length)
     : 0;
   const couples = Object.values(state.relationships).filter((relation) => relation.couple).length;
+  const hud = document.querySelector("#hudStats");
+  if (hud) hud.textContent = `${alive.length} residents · ${averageHappiness}% happy`;
   els.dayLabel.textContent = `Day ${state.day}`;
   els.timeLabel.textContent = formatHour(state.hour);
   els.aliveStat.textContent = alive.length;
@@ -27,6 +34,7 @@ export function renderStats(state, els) {
   els.moneyStat.textContent = `${averageMoney}`;
   els.happinessStat.textContent = `${averageHappiness}%`;
   els.couplesStat.textContent = couples;
+  els.graveyardStat.textContent = (state.deaths || 0) + state.people.filter(p => !p.alive).length;
   
   if (els.kidsStat) els.kidsStat.textContent = alive.filter((person) => person.isChild).length;
   if (els.treasuryStat) els.treasuryStat.textContent = `$${Math.floor(state.townTreasury)}`;
@@ -34,144 +42,49 @@ export function renderStats(state, els) {
   if (els.jailStat) els.jailStat.textContent = alive.filter((person) => person.jailHoursRemaining > 0).length;
 }
 
-export function renderMap(state, els, selectPersonFn) {
-  const selected = state.selectedId;
+export function renderMap(state, els, selectPersonFn, handlers) {
+  mountWorld(els.townMap, state, selectPersonFn, handlers);
   const targets = getPersonTargets(state, els);
-  els.townMap.innerHTML = `
-    <div class="road horizontal"></div>
-    <div class="road vertical"></div>
-  `;
-
-  buildings.forEach((building) => {
-    const node = document.createElement("div");
-    node.className = `building ${building.type}`;
-    node.style.left = `${building.x}%`;
-    node.style.top = `${building.y}%`;
-    node.style.transform = "translate(-50%, -50%)";
-    const meta =
-      building.type === "home"
-        ? `${homeOccupancy(state.people, building.id)}/${building.capacity} people, ${building.beds} bed`
-        : `${buildingOccupancy(state.people, building.id)} people`;
-    node.innerHTML = `<strong>${building.name}</strong><span>${meta}</span>`;
-    els.townMap.appendChild(node);
-  });
-
-  state.people.forEach((person) => {
-    const target = targets[person.id];
-    if (!target) return;
-    const speech = state.speech[person.id];
-    if (speech && speech.expiresAt <= performance.now()) {
-      delete state.speech[person.id];
-    }
-    const motion = state.motion[person.id] ?? {
-      x: target.x,
-      y: target.y,
-      targetX: target.x,
-      targetY: target.y,
-      wanderAt: performance.now() + Math.random() * 2000,
-    };
-    motion.targetX = target.x;
-    motion.targetY = target.y;
+  for (const person of state.people) {
+    const t = targets[person.id];
+    if (!t) continue;
+    const motion = state.motion[person.id] ?? { x: t.x, y: t.y, finalX:t.x, finalY:t.y, locationId:person.locationId, pose:t.pose, stationFacing:t.facing, route:[], wanderAt: 0 };
+    motion.targetX ??= t.x;
+    motion.targetY ??= t.y;
     state.motion[person.id] = motion;
-
-    const token = document.createElement("button");
-    token.type = "button";
-    token.className = `person-token ${person.status.toLowerCase().replaceAll(" ", "-")} ${
-      person.hunger >= 70 ? "hungry" : ""
-    } ${person.happiness <= 20 ? "depressed" : ""} ${person.sick ? "sick" : ""} ${
-      !person.alive ? "dead" : ""
-    } ${person.id === selected ? "selected" : ""}`;
-    token.dataset.personId = person.id;
-    token.style.left = `${motion.x}%`;
-    token.style.top = `${motion.y}%`;
-    token.textContent = person.name[0];
-    token.title = `${person.name}: ${person.status}`;
-    token.addEventListener("click", () => selectPersonFn(person.id));
-    els.townMap.appendChild(token);
-
-    if (state.speech[person.id]) {
-      const bubble = document.createElement("div");
-      bubble.className = `speech-bubble ${motion.y < 22 ? "below" : ""} ${
-        motion.x < 18 ? "align-left" : ""
-      } ${motion.x > 82 ? "align-right" : ""}`;
-      bubble.dataset.speechFor = person.id;
-      bubble.textContent = state.speech[person.id].text;
-      bubble.style.left = `${motion.x}%`;
-      bubble.style.top = `${motion.y}%`;
-      els.townMap.appendChild(bubble);
-    }
-  });
+  }
 }
 
-export function getPersonTargets(state, els) {
-  const targets = {};
-  const locationCounts = new Map();
-  const rect = els.townMap.getBoundingClientRect();
-  const width = rect.width || 900;
-  const height = rect.height || 590;
-
-  state.people.forEach((person) => {
-    const building = getBuilding(person.locationId);
-    if (!building) return;
-    const count = locationCounts.get(person.locationId) ?? 0;
-    locationCounts.set(person.locationId, count + 1);
-    const offset = getOffset(count);
-    targets[person.id] = {
-      x: clamp(building.x + (offset.x / width) * 100, 2, 98),
-      y: clamp(building.y + (offset.y / height) * 100, 2, 98),
-    };
-  });
-
-  return targets;
-}
-
-function getOffset(index) {
-  const positions = [
-    { x: -28, y: -36 },
-    { x: 0, y: -38 },
-    { x: 28, y: -36 },
-    { x: -34, y: -8 },
-    { x: 34, y: -8 },
-    { x: -24, y: 28 },
-    { x: 0, y: 32 },
-    { x: 24, y: 28 },
-  ];
-  return positions[index % positions.length];
+export function getPersonTargets(state) {
+  return personTargets(state, buildings);
 }
 
 export function renderPeopleList(state, els, selectPersonFn) {
   els.peopleList.innerHTML = "";
-  state.people.forEach((person) => {
-    const summary = relationshipSummary(state.people, state.relationships, person);
+  for (const person of state.people) {
     const card = document.createElement("button");
     card.type = "button";
-    card.className = `person-card ${person.id === state.selectedId ? "selected" : ""} ${
-      person.alive ? "" : "dead"
-    }`;
-    
-    const ageYears = Math.floor(person.ageDays / 365);
-    const jobInfo = person.isChild ? "Child" : (person.job?.title ?? "No job");
-    
+    card.className = `person-card ${person.id === state.selectedId ? "selected" : ""} ${person.alive ? "" : "dead"}`;
+    const age = Math.floor(person.ageDays / 365);
+    const job = person.isChild ? "Child" : person.job?.title ?? "Job seeker";
+    const needs = [["Hunger", person.hunger, "hunger"], ["Energy", person.energy, "energy"], ["Mood", person.happiness, "mood"]];
     card.innerHTML = `
-      <strong>${person.name}</strong>
-      <span>${person.status} · Age ${ageYears}</span>
-      <div class="chips">
-        <b class="chip">${person.trait}</b>
-        <b class="chip">${person.gender}</b>
-        <b class="chip">${person.skill}</b>
-        <b class="chip">${jobInfo}</b>
-        ${!person.isChild ? `<b class="chip">${Math.floor(person.money)}</b>` : ''}
-        <b class="chip">${Math.round(person.happiness)}% happy</b>
-        ${summary.partner ? `<b class="chip love">With ${summary.partner.name}</b>` : ""}
-        ${summary.closeCount ? `<b class="chip friend">${summary.closeCount} close</b>` : ""}
-        ${person.sick ? '<b class="chip danger">Sick</b>' : ""}
-        ${person.isChild ? '<b class="chip" style="background: #e7d4f5; color: #6b2d8f;">Child</b>' : ""}
+      <div class="resident-identity">
+        <canvas class="resident-avatar" aria-hidden="true"></canvas>
+        <div><strong>${person.name}</strong><small>${job} · <span class="resident-age">${age} yrs</span></small></div>
+        ${person.isChild ? "" : `<span class="resident-balance">$${Math.floor(person.money).toLocaleString("en-US")}</span>`}
       </div>
-      <span>Hunger ${Math.round(person.hunger)} · Energy ${Math.round(person.energy)} · Missed meals ${person.mealsMissed}</span>
+      <span class="resident-action">${residentActivity(state, person)}</span>
+      ${person.alive ? `<div class="resident-needs">${needs.map(([label, raw, type]) => {
+        const value = Math.round(raw);
+        return `<div class="resident-need ${type}"><span>${label}</span><b>${value}%</b><i aria-hidden="true" style="--fill:${value}%"></i></div>`;
+      }).join("")}</div>` : ""}
+      ${person.sick || person.jailHoursRemaining > 0 ? `<div class="resident-alert">${person.sick ? "Sick" : ""}${person.sick && person.jailHoursRemaining > 0 ? " · " : ""}${person.jailHoursRemaining > 0 ? "In jail" : ""}</div>` : ""}
     `;
+    drawPortrait(card.querySelector(".resident-avatar"), person);
     card.addEventListener("click", () => selectPersonFn(person.id));
     els.peopleList.appendChild(card);
-  });
+  }
 }
 
 export function renderDetails(state, els, openFriendModalFn) {
@@ -199,12 +112,13 @@ export function renderDetails(state, els, openFriendModalFn) {
   
   els.personDetails.className = "person-details";
   els.personDetails.innerHTML = `
-    <div class="detail-name">${person.name}</div>
-    <div class="detail-line"><span>Status</span><strong>${person.status}</strong></div>
+    <div class="profile-identity"><canvas class="profile-portrait" aria-hidden="true"></canvas><div><span class="profile-kicker">WILLOW CREEK RESIDENT</span><div class="detail-name">${person.name}</div><p>${person.isChild ? "Child" : person.job?.title ?? "Resident"}</p></div></div>
+    ${person.alive?'<div class="profile-actions"><button id="followResident">Follow resident</button><button id="locateResident">Find on map</button></div>':''}
+    <div class="detail-line"><span>Status</span><strong id="liveActivity">${residentActivity(state,person)}</strong></div>
     <div class="detail-line"><span>Age</span><strong>${ageYears} ${person.isChild ? '(Child)' : ''}</strong></div>
     ${parentInfo}
     <div class="detail-line"><span>Home</span><strong>${home?.name ?? "None"}</strong></div>
-    <div class="detail-line"><span>Current Place</span><strong>${location?.name ?? "Unknown"}</strong></div>
+    <div class="detail-line"><span>Destination</span><strong>${location?.name ?? "Unknown"}</strong></div>
     ${!person.isChild ? `<div class="detail-line"><span>Money</span><strong>${Math.floor(person.money)}</strong></div>` : ''}
     <div class="detail-line"><span>Gender</span><strong>${person.gender}</strong></div>
     ${!person.isChild ? `<div class="detail-line"><span>Partner</span><strong>${summary.partner?.name ?? "None"}</strong></div>` : ''}
@@ -228,6 +142,9 @@ export function renderDetails(state, els, openFriendModalFn) {
     ${!person.isChild ? `<button id="openFriendModal" class="wide-button" type="button">View Friends (${summary.friendCount})</button>` : ''}
   `;
 
+  drawPortrait(els.personDetails.querySelector(".profile-portrait"), person);
+  document.querySelector('#followResident')?.addEventListener('click',()=>{followResident(person.id);document.querySelector('#closeDrawer').click();});
+  document.querySelector('#locateResident')?.addEventListener('click',()=>{locateResident(person.id);document.querySelector('#closeDrawer').click();});
   if (!person.isChild) {
     document
       .querySelector("#openFriendModal")

@@ -1,3 +1,5 @@
+import { nearbyVictim } from './crime.js';
+import { requestMeal } from './activities.js';
 // Core simulation logic
 import { gameConfig, buildings, entryLevelJobs, jobs } from './constants.js';
 import { clamp } from './utils.js';
@@ -18,7 +20,24 @@ export function isWorkHour(person, hour) {
   }
 }
 
-export function updatePerson(person, state, addLogFn) {
+function attemptRobbery(robber, state, minMoney, limit, tryRobbery) {
+  if (!tryRobbery || robber.job?.title?.includes('Police')) return false;
+  const targets = state.people
+    .filter(victim => victim.money > minMoney && nearbyVictim(state, robber, victim, buildings))
+    .sort((a, b) => b.money - a.money)
+    .slice(0, limit);
+  if (!targets.length) return false;
+  const first = Math.floor(Math.random() * targets.length);
+  return targets.some((_, index) => tryRobbery(robber, targets[(first + index) % targets.length]));
+}
+
+function payWage(person, gross) {
+  const tax = Math.floor(gross * 0.15);
+  person.money += gross - tax;
+  person.treasuryContribution = (person.treasuryContribution || 0) + tax;
+}
+
+export function updatePerson(person, state, addLogFn, { tryRobbery } = {}) {
   if (!person.alive) return person;
 
   let next = { ...person };
@@ -40,10 +59,10 @@ export function updatePerson(person, state, addLogFn) {
       next.money = 50; // Starting money for new adults
       
       // Find a new home if there's one with capacity
-      const availableHome = buildings.find(b => b.type === "home" && buildingOccupancy(state.people, b.id) < b.capacity);
+      const availableHome = buildings.find(b => b.type === "home" && homeOccupancy(state.people, b.id) < b.capacity);
       if (availableHome) {
         next.homeId = availableHome.id;
-        next.locationId = next.homeId;
+        next.locationId = next.homeId ?? "town-square";
         addLogFn(`${next.name} turned ${gameConfig.childAdultAge}, got a job as ${next.job.title}, and moved into ${availableHome.name}!`);
       } else {
         addLogFn(`${next.name} turned ${gameConfig.childAdultAge} and got a job as ${next.job.title}!`);
@@ -61,7 +80,7 @@ export function updatePerson(person, state, addLogFn) {
     if (state.hour >= 22 || state.hour < 8) {
       next.energy = clamp(next.energy + 15, 0, 100);
       next.status = "Sleeping";
-      next.locationId = next.homeId;
+      next.locationId = next.homeId ?? "town-square";
     } else if (state.hour >= 9 && state.hour <= 15) {
       const school = buildings.find(b => b.type === "school");
       if (school) {
@@ -75,7 +94,7 @@ export function updatePerson(person, state, addLogFn) {
       }
     } else {
       next.status = "Child at home";
-      next.locationId = next.homeId;
+      next.locationId = next.homeId ?? "town-square";
     }
     
     // Parents feed children
@@ -85,6 +104,7 @@ export function updatePerson(person, state, addLogFn) {
       const parent = parentA?.alive ? parentA : parentB?.alive ? parentB : null;
       
       if (parent && parent.money >= gameConfig.mealCost) {
+        next.mealPaidBy = parent.id;
         next.hunger = clamp(next.hunger - 40, 0, 100);
         next.happiness = clamp(next.happiness + 5, 0, 100);
       }
@@ -99,7 +119,7 @@ export function updatePerson(person, state, addLogFn) {
       ...next,
       alive: false,
       status: "Died of old age",
-      locationId: next.homeId,
+      locationId: next.homeId ?? "town-square",
       deathDay: state.day,
     };
   }
@@ -115,9 +135,16 @@ export function updatePerson(person, state, addLogFn) {
     
     if (next.jailHoursRemaining === 0) {
       next.status = "Released from jail";
-      next.locationId = next.homeId;
+      next.locationId = next.homeId ?? "town-square";
       addLogFn(`🚔 ${next.name} was released from jail after serving their time.`);
     }
+    return next;
+  }
+
+  if (next.mealOrder) {
+    // Orders continue between hourly updates; diners cannot eat twice or collect wages.
+    next.mealOrder = {...next.mealOrder};
+    next.locationId = 'restaurant';
     return next;
   }
 
@@ -151,10 +178,54 @@ export function updatePerson(person, state, addLogFn) {
         ...next,
         alive: false,
         status: "Died from sickness",
-        locationId: next.homeId,
+        locationId: next.homeId ?? "town-square",
         deathDay: state.day,
       };
     }
+  }
+
+  // Residents must be able to earn their next meal even when already hungry.
+  if (next.money < gameConfig.mealCost && !next.sick) {
+    const onShift = isWorkHour(next, state.hour);
+    const canTakeExtraShift = state.hour >= 6 && state.hour <= 21 && next.energy >= 20;
+    if (next.job?.wage > 0 && (onShift || canTakeExtraShift)) {
+      next.locationId = next.job.building;
+      next.status = onShift ? 'Working' : 'Working extra for food';
+      payWage(next, onShift ? next.job.wage : Math.round(next.job.wage / 2));
+      next.energy = clamp(next.energy - (onShift ? 3 : 8), 0, 100);
+      return next;
+    }
+    if (!next.job && canTakeExtraShift && state.townTreasury >= gameConfig.mealCost) {
+      next.locationId = 'town-square';
+      next.status = 'Working to maintain the square';
+      next.money += gameConfig.mealCost;
+      next.treasuryContribution = -gameConfig.mealCost;
+      next.energy = clamp(next.energy - 6, 0, 100);
+      addLogFn(`${next.name} earned $${gameConfig.mealCost} helping maintain Town Square.`);
+      return next;
+    }
+  }
+
+  if (next.hunger >= 62 && next.money >= gameConfig.mealCost) {
+    const cafeOpen = state.hour>=10 && state.hour<20;
+    const restaurantWorker = next.job?.building==='restaurant' && isWorkHour(next,state.hour);
+    if(cafeOpen && !restaurantWorker) return requestMeal(next);
+    next.money -= gameConfig.mealCost;
+    next.mealsMissed = 0;
+    next.hunger = clamp(next.hunger - 42, 0, 100);
+    next.energy = clamp(next.energy + 4, 0, 100);
+    next.happiness = clamp(next.happiness + 6, 0, 100);
+    if (next.sick && next.happiness >= 45 && Math.random() < 0.18) {
+      next.sick = false;
+      next.sickHours = 0;
+      addLogFn(`${next.name} recovered after eating and feeling better.`);
+    }
+    next.locationId = restaurantWorker ? 'restaurant' : (next.homeId || 'town-square');
+    next.status = restaurantWorker ? 'Eating a staff meal' : 'Eating breakfast';
+    if (next.hunger <= 25) {
+      addLogFn(`${next.name} bought food for ${gameConfig.mealCost}.`);
+    }
+    return next;
   }
 
   if (next.happiness <= 15) {
@@ -164,7 +235,7 @@ export function updatePerson(person, state, addLogFn) {
     const isCop = next.job && next.job.title && next.job.title.includes("Police");
     if (next.happiness === 0 && next.money >= 20 && state.hour >= 10 && state.hour <= 23 && (!isCop || Math.random() < 0.3)) {
       const casino = buildings.find(b => b.type === "casino");
-      if (casino) {
+      if (casino && state.casinoBankroll >= gameConfig.casinoBrokeThreshold) {
         next.locationId = casino.id;
         const allIn = Math.floor(next.money); // Bet EVERYTHING
         next.money = 0;
@@ -172,7 +243,8 @@ export function updatePerson(person, state, addLogFn) {
         // Bet tracked for casino balance
         
         if (Math.random() < 0.45) { // 45% chance to win
-          const winnings = allIn * 2;
+          const winnings = Math.min(allIn * 2, Math.max(0, state.casinoBankroll) + allIn);
+          next.casinoContribution = allIn;
           next.casinoPayout = winnings; // Casino pays out
           const tax = Math.floor(winnings * 0.2);
           next.treasuryContribution = tax;
@@ -212,7 +284,7 @@ export function updatePerson(person, state, addLogFn) {
         // Desperate people gamble more - it's their last hope
         const casino = entertainment.find(b => b.type === "casino");
         const isCop = next.job && next.job.title && next.job.title.includes("Police");
-        if (casino && Math.random() < 0.7 && (!isCop || Math.random() < 0.3)) { // Cops less likely to gamble desperately
+        if (casino && state.casinoBankroll >= gameConfig.casinoBrokeThreshold && Math.random() < 0.7 && (!isCop || Math.random() < 0.3)) { // Cops less likely to gamble desperately
           next.locationId = casino.id;
           const bet = Math.floor(next.money * 0.8); // Bet almost everything!
           next.money -= bet;
@@ -220,7 +292,8 @@ export function updatePerson(person, state, addLogFn) {
           // Bet tracked for casino balance
           
           if (Math.random() < 0.45) { // 45% chance to win
-            const winnings = bet * 2;
+            const winnings = Math.min(bet * 2, Math.max(0, state.casinoBankroll) + bet);
+            next.casinoContribution = bet;
             next.casinoPayout = winnings; // Casino pays out
             const tax = Math.floor(winnings * 0.2);
             next.treasuryContribution = tax;
@@ -273,33 +346,9 @@ export function updatePerson(person, state, addLogFn) {
       }
     }
     
-    // DESPERATION: Try robbery before suicide
-    if (!next.isChild && next.money <= 15 && next.depressedHours >= 3 && next.happiness <= 30) {
-      // Initialize robbery confidence if not set
-      if (next.robberyConfidence === undefined) next.robberyConfidence = 0;
-      
-      // Desperate people attempt robbery instead of suicide
-      // Target the RICHEST people to balance wealth
-      const victims = state.people.filter(p => 
-        p.alive && 
-        p.id !== next.id && 
-        p.money > 50 && 
-        !p.isChild &&
-        !(p.job && p.job.title && p.job.title.includes("Police")) && 
-        !p.jailHoursRemaining
-      );
-      
-      if (victims.length > 0) {
-        // Sort by money and pick from top 3 richest
-        const richest = victims.sort((a, b) => b.money - a.money).slice(0, 3);
-        const victim = richest[Math.floor(Math.random() * richest.length)];
-        next.robbingVictimId = victim.id;
-        next.status = "Desperate - attempting robbery";
-        addLogFn(`💰 ${next.name} is desperate and targeting ${victim.name} who has $${Math.floor(victim.money)}...`);
-        return next;
-      }
-    }
-    
+    if (next.money <= 15 && next.depressedHours >= 3 &&
+        attemptRobbery(next, state, 50, 3, tryRobbery)) return next;
+
     // LAST RESORT: Suicide only if completely broke, depressed, and can't rob
     if (!next.isChild && next.money <= 0 && next.depressedHours >= 8 && next.happiness <= 10) {
       if (Math.random() < 0.15) { // Reduced from 35% - robbery is now preferred
@@ -308,7 +357,7 @@ export function updatePerson(person, state, addLogFn) {
           ...next,
           alive: false,
           status: "Ended their own life",
-          locationId: next.homeId,
+          locationId: next.homeId ?? "town-square",
           deathDay: state.day,
         };
       }
@@ -324,24 +373,6 @@ export function updatePerson(person, state, addLogFn) {
   }
 
   if (next.hunger >= 62) {
-    if (next.money >= gameConfig.mealCost) {
-      next.money -= gameConfig.mealCost;
-      next.mealsMissed = 0;
-      next.hunger = clamp(next.hunger - 42, 0, 100);
-      next.energy = clamp(next.energy + 4, 0, 100);
-      next.happiness = clamp(next.happiness + 6, 0, 100);
-      if (next.sick && next.happiness >= 45 && Math.random() < 0.18) {
-        next.sick = false;
-        next.sickHours = 0;
-        addLogFn(`${next.name} recovered after eating and feeling better.`);
-      }
-      next.locationId = "restaurant";
-      next.status = "Eating";
-      if (next.hunger <= 25) {
-        addLogFn(`${next.name} bought food for ${gameConfig.mealCost}.`);
-      }
-      return next;
-    }
     next.mealsMissed += 1;
     next.happiness = clamp(next.happiness - 10, 0, 100);
     if (next.hunger >= 96 && next.mealsMissed >= 4) {
@@ -350,12 +381,16 @@ export function updatePerson(person, state, addLogFn) {
         ...next,
         alive: false,
         status: "Died from hunger",
-        locationId: next.homeId,
+        locationId: next.homeId ?? "town-square",
         deathDay: state.day,
       };
     }
-    next.locationId = next.homeId;
+    next.locationId = next.homeId ?? "town-square";
     next.status = "Too broke to eat";
+    if (next.energy <= 18 && !isWorkHour(next, state.hour)) {
+      next.energy = clamp(next.energy + 16, 0, 100);
+      next.status = 'Resting before the next shift';
+    }
     if (next.mealsMissed === 1 || next.mealsMissed % 3 === 0) {
       addLogFn(`${next.name} is hungry but only has ${Math.floor(next.money)}.`);
     }
@@ -376,7 +411,7 @@ export function updatePerson(person, state, addLogFn) {
     next.energy = clamp(next.energy + recovery, 0, 100);
     next.hunger = clamp(next.hunger + 1, 0, 100);
     next.happiness = clamp(next.happiness + (next.sick ? 1 : 3), 0, 100);
-    next.locationId = next.homeId;
+    next.locationId = next.homeId ?? "town-square";
     next.status = next.sick ? "Sick in bed" : "Sleeping";
     return next;
   }
@@ -394,6 +429,7 @@ export function updatePerson(person, state, addLogFn) {
     }
     next.happiness = clamp(next.happiness + 2, 0, 100);
     next.energy = clamp(next.energy - 2, 0, 100);
+    payWage(next, next.job.wage);
     return next;
   }
 
@@ -407,30 +443,8 @@ export function updatePerson(person, state, addLogFn) {
     const confidenceBonus = (next.robberyConfidence || 0) * 0.02;
     const robberyChance = Math.min(baseChance + confidenceBonus, isCareerCriminal ? 0.9 : 0.7); // Max 90% for criminals, 70% for desperate
     
-    if (Math.random() < robberyChance) {
-      // Initialize robbery confidence if not set
-      if (next.robberyConfidence === undefined) next.robberyConfidence = 0;
-      
-      // Target the RICHEST people to balance wealth
-      const victims = state.people.filter(p => 
-        p.alive && 
-        p.id !== next.id && 
-        p.money > 100 && // Only rob people with significant money
-        !p.isChild &&
-        !(p.job && p.job.title && p.job.title.includes("Police")) && 
-        !p.jailHoursRemaining
-      );
-      
-      if (victims.length > 0) {
-        // Sort by money and pick from top 5 richest
-        const richest = victims.sort((a, b) => b.money - a.money).slice(0, 5);
-        const victim = richest[Math.floor(Math.random() * richest.length)];
-        next.robbingVictimId = victim.id;
-        next.status = "Attempting robbery";
-        addLogFn(`💰 ${next.name} (confidence: ${next.robberyConfidence}) is targeting ${victim.name} who has $${Math.floor(victim.money)}...`);
-        return next;
-      }
-    }
+    if (tryRobbery && Math.random() < robberyChance &&
+        attemptRobbery(next, state, 100, 5, tryRobbery)) return next;
   }
 
   // Broke people work whenever possible (even on weekends!)
@@ -557,7 +571,8 @@ export function updatePerson(person, state, addLogFn) {
           next.money -= bet;
           // Bet tracked for casino balance
           if (Math.random() < 0.45) { // 45% chance to win
-            const winnings = bet * 2;
+            const winnings = Math.min(bet * 2, Math.max(0, state.casinoBankroll) + bet);
+            next.casinoContribution = bet;
             next.casinoPayout = winnings; // Casino pays out
             const tax = Math.floor(winnings * 0.2);
             next.treasuryContribution = tax;
@@ -648,7 +663,7 @@ export function updatePerson(person, state, addLogFn) {
       next.status = "Socializing";
       next.happiness = clamp(next.happiness + 4, 0, 100);
     } else {
-      next.locationId = next.homeId;
+      next.locationId = next.homeId ?? "town-square";
       next.status = "Running errands";
       next.happiness = clamp(next.happiness + 1, 0, 100);
     }
@@ -684,7 +699,7 @@ export function updatePerson(person, state, addLogFn) {
     }
   }
 
-  next.locationId = next.homeId;
+  next.locationId = next.homeId ?? "town-square";
   next.status = "At home";
   next.energy = clamp(next.energy + 4, 0, 100);
   next.happiness = clamp(next.happiness + 1, 0, 100);
