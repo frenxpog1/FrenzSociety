@@ -1,8 +1,29 @@
 # Frenz Society · Willow Creek
 
-Frenz Society is a browser-based town simulator. Follow residents through work, meals, friendships and family life, inspect furnished buildings, and expand the neighborhood one lot at a time. The game uses original Canvas artwork and runs in the browser with no runtime packages.
+**Development status** · Playable prototype in active development
 
-## Quick start
+## Abstract
+
+Frenz Society is a top-down browser sandbox about a town and the people who live in it. Residents make their own decisions as they work, eat, rest, spend money, and form relationships. Their needs, jobs and finances shape the day. A hungry worker might order lunch at the café, a job seeker might take a paid shift in Town Square, and an officer on night patrol might respond to a nearby robbery.
+
+You guide the neighborhood by observing residents, checking how the town is doing, welcoming newcomers, and placing buildings where they can serve the community. Follow one person to see how their day unfolds, or zoom out and look for shared problems such as crowded homes and a shortage of jobs. Optional community goals give you reasons to improve housing, meals, happiness and friendships at your own pace. The game uses original Canvas artwork and runs in the browser without runtime packages.
+
+## Current features
+
+| System | What's playable now |
+| --- | --- |
+| Living residents | Residents have individual needs, money, jobs, personalities and routines. They can make friends, argue, form couples, raise children, get sick and grow older. The town has a school, hospital, church, casino and graveyard alongside homes and workplaces. |
+| Illustrated town | Explore sidewalks, crossings, gardens, picnic spots and the riverbank. Toggle roofs and furnished cutaways. Residents have matching portraits and distinct poses for walking, running, working, cooking, eating, sleeping and sweeping. |
+| Work and the economy | Residents earn wages, pay taxes and daily expenses, and can receive promotions. Offices recruit eligible job seekers into vacancies. Hungry workers can take shifts to afford food, and eligible job seekers can earn $8 maintaining Town Square when the treasury has funds. The town can redistribute treasury funds, and the casino has its own bankroll. |
+| Staffed café | Customers travel to the café, queue, order from a server, wait for a cook, collect their food and eat at a table. Payment happens once. Customers still travelling cannot hold up the queue. |
+| Police and crime | Robberies play out between nearby outdoor residents, and available officers travel to intervene. A robber can surrender peacefully. An ordinary surrender keeps the victim's money safe and leads to three days in jail. A failed attempt lets the resident return to their routine. Night patrols carry directional flashlights. |
+| Construction and interiors | Place homes, offices, schools and churches with a lot preview and placement checks. Inspect who's present, who's coming, housing capacity, staff, vacancies and café orders. Select Willow, Coastal or Terracotta finishes for homes. |
+| Observation and progress | Follow a resident with a camera card that shows their current activity and needs. Review town statistics and live goals in **Town**, and read conversations and major events in **Journal**. |
+| Time and saves | Pause, resume, change speed, or step by an hour or day. The town autosaves locally and supports portable JSON saves and backup recovery. |
+
+## How to play
+
+### Start the game
 
 Use Node.js 18 or later. From the project folder, run:
 
@@ -10,54 +31,54 @@ Use Node.js 18 or later. From the project folder, run:
 npm start
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Use the local server so the browser can load the game's JavaScript modules.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The local server lets the browser load the game's JavaScript modules.
+
+### Your first day
+
+1. **Watch someone work.** Click a living resident on the map or choose one in **Residents**. The camera follows them, and the follow card shows their needs and activity. Open **Profile** for details such as their job, household and relationships.
+2. **Look inside the café.** Use the **Café** shortcut, then select the building to inspect it. Watch orders move from the counter to the kitchen and tables as time passes.
+3. **Pick a town goal.** Open **Town** to see current housing, meal, happiness and friendship goals. The progress changes as residents go through their day.
+4. **Expand the neighborhood.** Open **Build**, choose a home, office, school or church, and select a lot. Green means the lot is clear. Use **Find open lot** for a suggestion, then confirm with **Build here**. Construction is free in the current sandbox. You can also choose **Welcome a neighbor** in the Build panel.
+5. **See what changed.** Let time run or step forward, then inspect a building or open **Journal**. Check who moved in, where people are working, or what happened while you were following someone.
+
+### Controls
+
+| Action | Mouse, touch or keyboard |
+| --- | --- |
+| Pan and zoom | Drag the map. Scroll or use **+ / −** to zoom. With the map focused, arrow keys pan and **Home** resets the view. |
+| Follow or stop | Select a living resident on the map, in **Residents**, or in a building profile. Drag the map, press **Escape**, or use **×** on the follow card to stop. |
+| Inspect buildings | Select a building on the map or use **Town → Inspect a building**. Use **Labels** and **Interiors** to adjust the map view. |
+| Place a building | Click or tap a lot. With the map focused, arrow keys move the preview, **Shift** moves it farther, **Enter** confirms, and **Escape** cancels. |
+| Change time | Use **Pause / Resume**, **+1 hour**, or **+1 day**. **Space** toggles pause when the map is focused. **Settings** controls speed, event pauses, lifespan and starting population. |
+
+### Save and return
+
+The town autosaves in your browser and restores paused. Use **Settings → Save now** to save immediately, **Download save** to export a JSON file, **Load save** to import it, or **Restore backup** to recover an earlier save. Exporting lets you move your town between devices. Clearing your browser's site data removes the local saves.
+
+## Development roadmap
+
+The game is in active development. These are planned improvements and longer-term ideas.
+
+| Priority | Planned feature or improvement | What it would add |
+| --- | --- | --- |
+| Near term | **Crowd movement and furniture clearance** | Better spacing on narrow paths, at doors and in queues, plus routes that take furniture footprints into account. |
+| Near term | **Simulation balance and reliability** | Improve aging, household costs, food recovery, wages and the pace of major events. Keep existing towns readable as saves evolve. |
+| Near term | **Animation, UI and mobile polish** | More visible everyday activities, clearer feedback when residents change plans, richer street detail and better performance in busy scenes. |
+| Planned | **Resident stories and town progression** | Personal timelines for jobs, moves, relationships and major events. More meaningful community milestones and choices about how the town grows. |
+| Planned | **Furniture and home upgrades** | Place and rotate furniture, expand homes, and give residents usable paths to beds, seats and workstations after a layout change. |
+| Longer term | **Bicycles and cars** | Resident journeys that include finding a vehicle, following appropriate paths or roads, parking, and walking to the final destination. |
+| Longer term | **New districts** | More room for neighborhoods and landmarks, with navigation, rendering and save support for a larger map. |
+
+Residents can currently overlap in tight spaces. Home finishes change the look of fixed room layouts, and the cars and bicycles on the map are scenery. See [DEVELOPMENT.md](DEVELOPMENT.md) for the roadmap and implementation details.
+
+## Project setup and testing
 
 ```bash
 npm test       # Run the regression suite
 npm run build  # Prepare the static game in dist/
 ```
 
-Serve `dist/` on a static host to run the production build.
-
-## Play the town
-
-| Action | Controls |
-| --- | --- |
-| Explore | Drag the map to pan. Use the wheel or **+ / −** to zoom. With the map focused, arrow keys pan and **Home** resets the view. |
-| Follow a resident | Select a living resident on the map, in **Residents**, or in a building profile. The camera follows them and shows their activity, needs and meal progress. Open **Profile** for more details. Drag the map, press **Escape**, or use the stop button to release the camera. |
-| Inspect a building | Select it on the map or choose it in **Town**. The profile shows who is inside, who is arriving, and relevant capacity, staff or meal information. **Office**, **Café** and **Home** are quick camera shortcuts. |
-| Change the view | Use **Labels** and **Interiors** to control map labels and roof cutaways. On a narrow screen, the initial camera opens closer to the neighborhood. |
-| Control time | Use **Pause / Resume**, **+1 hour**, or **+1 day**. **Space** toggles time when focus is on the map. **Settings** controls speed, event pauses, lifespan and starting population. |
-| See town progress | **Town** shows live goals for housing, food, happiness and friendships. **Journal** records conversations and major events. |
-
-## What's new in Willow Creek
-
-### Map, buildings and homes
-
-- The illustrated map includes sidewalks, crossings, a riverbank, gardens, picnic spots, street signs and night lighting. Furnished cutaways show workplaces, the café, homes and other public buildings.
-- **Build** offers homes, offices, schools and churches. Choose a building, select a clear lot, then choose **Build here**. Green and red outlines show whether the placement is valid. Use **Find open lot** for a suggestion, arrow keys to move the preview, **Enter** to confirm, and **Escape** to cancel. Construction is free in this sandbox.
-- New offices recruit eligible job seekers into available positions. Building profiles show job openings and staff assignments. Homes offer Willow, Coastal and Terracotta finishes for walls, floors and furnishings.
-
-### Residents, work and the café
-
-- Resident cards show matching portraits, cash, current activity, hunger, energy and mood. Green and brass controls, layered panels and a clearer clock frame the playable map.
-- Residents follow pedestrian routes around buildings and use distinct walking and running strides. Poses cover talking, typing, reading, cooking, serving, eating, sleeping and sweeping. Café tables and counters layer over characters as they move through the room.
-- Customers walk to the café, queue, order from a server, wait for a cook, collect their meal and take a table seat. Payment happens once, and a customer still walking to the café cannot block someone already waiting.
-- Hungry residents can earn wages to pay for food. Eligible job seekers can earn **$8** maintaining Town Square when the treasury can cover the shift. Police receive shift pay while patrolling or at the station. Residents can still form relationships, raise families, get promoted and visit the casino.
-
-### Crime and public safety
-
-- Robberies play out between nearby outdoor residents. A robber can wear a hood and face covering, approach with a knife or pistol, and frighten the victim. Available officers physically respond when close enough.
-- Robbers can lose their nerve, lower their weapon and surrender without a shootout. An ordinary surrender preserves the victim's money and leads to three days in jail. Actual pistol shots have a brief flash, recoil and smoke.
-- A robbery reserves its participants only when the encounter can start. Failed attempts let residents continue their normal routines. Night patrols use directional flashlights that stop at building walls.
-
-## Saves and settings
-
-The town autosaves in the current browser and restores paused. In **Settings**, use **Save now**, **Download save**, **Load save**, or **Restore backup**. A downloaded JSON save lets you move a town between browsers or devices. Clearing the browser's site data removes its local saves.
-
-Save validation checks residents, buildings, placements, and active activities or encounters before restoring the town. Saved layouts and home finishes travel with the save file.
-
-## Development
+Serve `dist/` on a static host for the production build. The game update passed 81 automated checks covering resident behavior, economy, construction, café service, crime and save restoration.
 
 | Area | Files |
 | --- | --- |
@@ -67,6 +88,4 @@ Save validation checks residents, buildings, placements, and active activities o
 | Canvas art and animation | `src/world.js`, `src/characters.js`, `src/room-art.js`, `src/animation.js` |
 | Saves and regression checks | `src/persistence.js`, `tests/` |
 
-The latest game update passed 81 automated checks. Coverage includes economy and recovery, resident decisions, construction, staffed café service, police response, surrender, and save restoration. See [REVIEW.md](REVIEW.md) for the change history and verification, [ART_DIRECTION.md](ART_DIRECTION.md) for the visual design, and [DEVELOPMENT.md](DEVELOPMENT.md) for planned work.
-
-Crowds can still overlap on narrow routes. Room layouts use fixed furniture positions, and the cars and bicycles on the map are scenery.
+See [REVIEW.md](REVIEW.md) for completed updates and verification, and [ART_DIRECTION.md](ART_DIRECTION.md) for the visual design.
