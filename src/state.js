@@ -1,6 +1,12 @@
 // Global state management
 export const state = {
   running: true,
+  pauseForEvents: false,
+  followId: null,
+  buildMode: null,
+  inspectedBuildingId: null,
+  recentEvents: [],
+  saveBlocked: false,
   speed: 1,
   resumeDelay: 0, // Seconds to wait before auto-resuming after modal
   modalUserClicked: false, // Track if user clicked Continue on current modal
@@ -12,6 +18,8 @@ export const state = {
   buildings: [],
   relationships: {},
   motion: {},
+  crimeEncounters: [],
+  pendingCrimeDeaths: [],
   speech: {},
   recentTopics: {},
   selectedId: null,

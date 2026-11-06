@@ -1,3 +1,4 @@
+import { toPercent } from './layout.js';
 // Game constants and configuration
 export const names = [
   // Original names
@@ -92,18 +93,17 @@ export const buildings = [
     name: `House ${index + 1}`,
     beds: 1,
     capacity: 2,
-    x: [9, 23, 37, 63, 77, 91, 8, 24, 76, 92][index],
-    y: [12, 12, 12, 12, 12, 12, 82, 82, 82, 82][index],
+    ...toPercent([200,420,600,1020,1240,1740,200,430,1660,1880][index], index<6?140:1160),
   })),
-  { id: "office-1", type: "office", name: "Office A", jobs: 4, x: 22, y: 50 },
-  { id: "office-2", type: "office", name: "Office B", jobs: 4, x: 78, y: 50 },
-  { id: "restaurant", type: "restaurant", name: "Restaurant", jobs: 4, x: 50, y: 72 },
-  { id: "town-square", type: "square", name: "Town Square", x: 50, y: 29 },
-  { id: "school-1", type: "school", name: "Town School", x: 50, y: 12 },
-  { id: "church-1", type: "church", name: "Town Church", x: 50, y: 90 },
-  { id: "police-1", type: "police", name: "Police Station", x: 16, y: 30 },
-  { id: "jail-1", type: "jail", name: "Town Jail", x: 30, y: 30 },
-  { id: "hospital-1", type: "hospital", name: "Town Hospital", x: 84, y: 30 },
-  { id: "casino-1", type: "casino", name: "Casino", x: 16, y: 65 },
-  { id: "graveyard-1", type: "graveyard", name: "Town Graveyard", x: 84, y: 65 },
+  { id: "office-1", type: "office", name: "Office A", jobs: 4, ...toPercent(420, 650) },
+  { id: "office-2", type: "office", name: "Office B", jobs: 4, ...toPercent(1740, 650) },
+  { id: "restaurant", type: "restaurant", name: "Restaurant", jobs: 4, ...toPercent(1080, 1090) },
+  { id: "town-square", type: "square", name: "Town Square", ...toPercent(1080, 650) },
+  { id: "school-1", type: "school", name: "Town School", ...toPercent(1080, 300) },
+  { id: "church-1", type: "church", name: "Town Church", ...toPercent(1080, 1295) },
+  { id: "police-1", type: "police", name: "Police Station", ...toPercent(220, 310) },
+  { id: "jail-1", type: "jail", name: "Town Jail", ...toPercent(480, 310) },
+  { id: "hospital-1", type: "hospital", name: "Town Hospital", ...toPercent(1740, 310) },
+  { id: "casino-1", type: "casino", name: "Casino", ...toPercent(200, 780) },
+  { id: "graveyard-1", type: "graveyard", name: "Town Graveyard", ...toPercent(1550, 160) },
 ];

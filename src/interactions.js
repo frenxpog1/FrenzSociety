@@ -61,7 +61,10 @@ export function updateRelationship(personA, personB, place, argued, relationship
     (personA.trait === "Social" || personB.trait === "Social" ? 2 : 0);
   
   // Check if genders are compatible for romance (opposite genders only)
-  const gendersCompatible = personA.gender !== personB.gender;
+  const parentsA = [personA.parentAId, personA.parentBId].filter(Boolean);
+  const parentsB = [personB.parentAId, personB.parentBId].filter(Boolean);
+  const related = parentsA.includes(personB.id) || parentsB.includes(personA.id) || parentsA.some(id => parentsB.includes(id));
+  const gendersCompatible = personA.gender !== personB.gender && !personA.isChild && !personB.isChild && !related;
   
   const romanceGain =
     relation.friendship >= gameConfig.friendThreshold && 
@@ -101,7 +104,7 @@ export function updateRelationship(personA, personB, place, argued, relationship
     gendersCompatible &&
     relation.friendship >= gameConfig.coupleFriendThreshold &&
     relation.romance >= gameConfig.coupleRomanceThreshold &&
-    personA.money >= 10 && personB.money >= 10 && // Lowered from 20 to 10 - VERY easy to marry!
+    personA.money >= 20 && personB.money >= 20 && // Lowered from 20 to 10 - VERY easy to marry!
     Math.random() < 0.98 // Increased from 0.95 - almost guaranteed to marry when ready
   ) {
     relation.couple = true;
